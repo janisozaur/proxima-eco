@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, viewport-fit=cover" />
+    <title>bram GSM gate — memory dump</title>
+    <link rel="manifest" href="./manifest.json" />
+    <meta name="theme-color" content="#20242a" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <h1>bram GSM gate — memory dump</h1>
+    <p>
+      Reads the whole transfer window from the gate over WebHID and produces a
+      <code>.bme</code> file the vendor client can open. Nothing is uploaded; the page talks only
+      to the device.
+    </p>
+    <form>
+      <label for="password">Password (8 characters max; the service password never reaches the gate)</label>
+      <input id="password" type="text" maxlength="8" />
+    </form>
+    <button id="go" type="button" onclick="void 0">Connect and read</button>
+    <p id="result">Not started.</p>
+    <a id="download">Download the .bme file</a>
+  </body>
+</html>

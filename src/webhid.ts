@@ -1,0 +1,95 @@
+/**
+ * WebHID transport (Chrome/Edge).
+ *
+ * The gate uses fixed 64-byte reports with **no report-ID prefix**, so `send(0, bytes)` is correct:
+ * reportId `0` means "no ID byte", and the opcode is byte 0 of the report itself.
+ *
+ * `requestDevice` filters by VID/PID, which is **not recoverable from the captures** (no
+ * `GET_DEVICE_DESCRIPTOR` was ever issued). Until the pair is pinned, we request with an empty
+ * filter and disambiguate by the measured `maxMessageSize === 64`.
+ */
+
+import type { Frame, HidDevice, HidFilter, HidApi, NavigatorWithHid } from '../types/webhid.ts';
+import type { PushHandler, Transport } from './transport.ts';
+import { CMD_PUSH, REPORT_LEN, decodeFrame, encodeFrame, isResponseOf } from './protocol.ts';
+
+/** A report carries no report-ID byte, so the ID passed to `send` is always 0. */
+const NO_REPORT_ID = 0;
+
+export class WebHidTransport implements Transport {
+  private readonly device: HidDevice;
+  private readonly handlers: PushHandler[] = [];
+
+  constructor(device: HidDevice) {
+    this.device = device;
+  }
+
+  request(opcode: number, body?: Uint8Array): Promise<Frame> {
+    return this.exchange(opcode, body ?? new Uint8Array(0));
+  }
+
+  private async exchange(opcode: number, body: Uint8Array): Promise<Frame> {
+    this.device.send(NO_REPORT_ID, encodeFrame(opcode, body));
+    for (;;) {
+      const f = decodeFrame(await this.device.receive());
+      if (f.opcode === CMD_PUSH) {
+        for (const h of this.handlers) {
+          h.handle(f);
+        }
+        continue; // a push is not the reply; keep waiting
+      }
+      if (!isResponseOf(opcode, f.opcode)) {
+        throw new Error(
+          `unexpected response 0x${f.opcode.toString(16)} for 0x${opcode.toString(16)}`,
+        );
+      }
+      return f;
+    }
+  }
+
+  onPush(handler: PushHandler): void {
+    this.handlers.push(handler);
+  }
+
+  close(): void {
+    this.device.close();
+  }
+}
+
+export interface ConnectOptions {
+  /** Empty filter means "any device"; pin the real pair once discovered. */
+  filters?: HidFilter[];
+}
+
+/**
+ * TODO: pin the gate's `vendorId`/`productId` here after one successful discovery run, so the
+ * browser prompt shows exactly one device.
+ */
+export const PINNED_FILTERS: HidFilter[] = [];
+
+export async function connectWebHid(options: ConnectOptions = {}): Promise<WebHidTransport> {
+  const hid: HidApi | undefined = (navigator as NavigatorWithHid).hid;
+  if (hid === undefined) {
+    throw new Error('WebHID is not available in this browser');
+  }
+  const filters = options.filters ?? PINNED_FILTERS;
+  const devices = await hid.requestDevice({ filters });
+  if (devices.length === 0) {
+    throw new Error('no HID device matched');
+  }
+  // The gate is the HID-class device with 64-byte fixed reports.
+  const gate = devices.find((d) => d.maxMessageSize === REPORT_LEN) ?? devices[0];
+  return new WebHidTransport(gate);
+}
+
+/** Discovery helper: reports what the browser sees, so VID:PID can be pinned. */
+export async function describeDevices(): Promise<string[]> {
+  const hid: HidApi | undefined = (navigator as NavigatorWithHid).hid;
+  if (hid === undefined) {
+    return [];
+  }
+  const devices = await hid.requestDevice({ filters: [{}] });
+  return devices.map((d) =>
+    `vendor=0x${d.vendorId.toString(16)} product=0x${d.productId.toString(16)} ` +
+    `maxMessageSize=${d.maxMessageSize}`);
+}

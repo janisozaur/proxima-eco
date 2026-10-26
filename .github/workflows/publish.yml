@@ -1,0 +1,26 @@
+name: Publish to GitHub Pages
+
+# Plain Actions (no Pages-app YAML): the build output is committed to `docs/`, which
+# "Deploy from a branch" serves at the site root. The commit message carries `[skip ci]`
+# so publishing cannot recurse.
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    actions:
+      - exec: corepack enable
+      - exec: npm ci
+      - exec: npm run build
+      - exec: |
+          rm -rf docs
+          mkdir -p docs
+          cp -r dist/. docs/
+          git add -f docs
+          git commit -m "publish build [skip ci]"
+          git push
