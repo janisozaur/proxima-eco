@@ -32,7 +32,7 @@ import {
   WYJ1_BIT,
   WYJ2_BIT,
   ADMIN_SLOTS,
-  readAdminInfo,
+  ADMIN_FIELDS,
   readTotal,
   countGroups,
   countAbonents,
@@ -206,8 +206,83 @@ function originFlag(at: number, bit: number): boolean {
   return o !== null && (o[at] & bit) !== 0;
 }
 
-/** One observer for whichever grids are currently painted; re-rendering replaces it. */
+/** One observer for whichever panel is currently painted; re-rendering replaces it. */
 let cellObserver: MutationObserver | null = null;
+
+/**
+ * Every editable cell of the panel about to be painted. A panel owns its cells only while it is
+ * painted, so a re-render drops the old ones and the observer watching them — otherwise a stale
+ * cell could still be written into the image.
+ */
+function beginPaint(): void {
+  CELL_SLOTS.clear();
+  FLAG_CELLS.clear();
+  const previous: MutationObserver | null = cellObserver;
+  if (previous !== null) {
+    previous.disconnect();
+  }
+  cellObserver = null;
+}
+
+/**
+ * What a mutation in an editable cell means: the text now in the cell is written straight back
+ * into the image slot behind it, which is what makes the change reach the gate on „Zapis to
+ * device" or „Save .bme". A phone cell going empty ↔ filled also adds or removes an entry, so the
+ * grids and the head's bound at `0x000F` are rebuilt.
+ */
+function cellMutations(ms: MutationRecord[]): void {
+  const img = state.image;
+  if (img === null) {
+    return;
+  }
+  let touched = false;
+  for (const m of ms) {
+    const node = m.target;
+    if (node === null) {
+      continue;
+    }
+    const cell = node instanceof HTMLElement ? node : node.parentElement;
+    if (cell === null) {
+      continue;
+    }
+    const slot = CELL_SLOTS.get(cell);
+    if (slot === undefined) {
+      continue;
+    }
+    const before = decodeCp1250(img, slot.at, slot.limit);
+    encodeCp1250(img, slot.at, slot.limit, cell.textContent);
+    const stored = decodeCp1250(img, slot.at, slot.limit);
+    if (cell.textContent !== stored) {
+      // the slot is shorter than what was typed, or a letter has no CP-1250 byte: show what the
+      // image actually holds rather than what was typed
+      cell.textContent = stored;
+    }
+    if (slot.phone && (before === '') !== (stored === '')) {
+      // an entry was added or removed: the grids and the head's bound follow the table
+      if (stored === '') {
+        clearAbonent(img, slot.poz);
+      }
+      syncBound(img, slot.poz);
+      repaint();
+      return;
+    }
+    touched = true;
+    markCell(cell, stored !== originText(slot.at, slot.limit));
+  }
+  if (touched) {
+    renderFooter();
+  }
+}
+
+/** Watch the containers the current paint owns. */
+function watchCells(roots: HTMLElement[]): void {
+  const obs = new MutationObserver(cellMutations);
+  const watch = {childList: true, characterData: true, subtree: true};
+  for (const r of roots) {
+    obs.observe(r, watch);
+  }
+  cellObserver = obs;
+}
 
 /**
  * Which slots each grid shows. The vendor's loader (`FUN_004C7E94`) walks slots `1..total` and
@@ -298,14 +373,8 @@ function renderAbonents(panel: HTMLElement): void {
     return;
   }
 
-  // the cells this render owns; stale entries from a previous paint must not be edited into
-  CELL_SLOTS.clear();
-  FLAG_CELLS.clear();
-  const previous: MutationObserver | null = cellObserver;
-  if (previous !== null) {
-    previous.disconnect();
-  }
-  cellObserver = null;
+  // the cells this render owns are registered as they are built; showPanel already dropped the
+  // previous paint's cells and its observer in beginPaint
 
   const grids = add(panel, el('div', 'grids', ''));
   const groups: { title: string; slots: number[]; addLabel: string }[] = [
@@ -424,48 +493,7 @@ function renderAbonents(panel: HTMLElement): void {
     }
   }
 
-  const obs = new MutationObserver((ms) => {
-    const img = state.image;
-    if (img === null) {
-      return;
-    }
-    let touched = false;
-    for (const m of ms) {
-      const node = m.target;
-      if (node === null) {
-        continue;
-      }
-      const cell = node instanceof HTMLElement ? node : node.parentElement;
-      if (cell === null) {
-        continue;
-      }
-      const slot = CELL_SLOTS.get(cell);
-      if (slot === undefined) {
-        continue;
-      }
-      const before = decodeCp1250(img, slot.at, slot.limit);
-      encodeCp1250(img, slot.at, slot.limit, cell.textContent);
-      if (slot.phone && (before === '') !== (cell.textContent === '')) {
-        // an entry was added or removed: the grids and the head's bound follow the table
-        if (cell.textContent === '') {
-          clearAbonent(img, slot.poz);
-        }
-        syncBound(img, slot.poz);
-        repaint();
-        return;
-      }
-      touched = true;
-      markCell(cell, decodeCp1250(img, slot.at, slot.limit) !== originText(slot.at, slot.limit));
-    }
-    if (touched) {
-      renderFooter();
-    }
-  });
-  const watch = {childList: true, characterData: true, subtree: true};
-  for (const b of bodies) {
-    obs.observe(b, watch);
-  }
-  cellObserver = obs;
+  watchCells(bodies);
 
   note(
     panel,
@@ -493,24 +521,43 @@ function renderAbonents(panel: HTMLElement): void {
   );
 }
 
+/**
+ * Tab 2, editable in place. The three values are the config head's own fields, so typing in one
+ * writes it straight into the image exactly where the packer puts it — the PIN at `0x0001`, the
+ * PC password at `0x0011` and the SMS password at `0x0016` — with the vendor's own capacities.
+ * The byte after each field belongs to its neighbour (`image[0]` above the PIN, the flag array at
+ * `0x001F` after the SMS password), so an edit never reaches it.
+ */
 function renderAdmin(panel: HTMLElement): void {
-  if (state.image === null) {
+  const image = state.image;
+  if (image === null) {
     note(panel, 'No image — the admin PINs live in the config head at 0x0000.');
     return;
   }
-  const a = readAdminInfo(state.image);
-  add(panel, card('Info admin.', [
-    ['PIN (gate)', a.devicePin],
-    ['Hasło computer PC', a.pcPassword],
-    ['Hasło SMS', a.smsPassword],
-  ]));
+  const c = add(panel, el('div', 'card', ''));
+  add(c, el('h2', '', 'Info admin.'));
+  const dl = add(c, el('dl', 'dl', ''));
+  for (const f of ADMIN_FIELDS) {
+    add(dl, el('dt', '', f.label));
+    const dd = add(dl, el('dd', 'edit', decodeCp1250(image, f.at, f.limit)));
+    const at = f.at;
+    const limit = f.limit;
+    dd.setAttribute('contenteditable', 'true');
+    dd.spellcheck = false;
+    CELL_SLOTS.set(dd, {at, limit, phone: false, poz: 0});
+    dd.addEventListener('dblclick', () => resetCell(dd, at, limit, false, 0));
+    markCell(dd, decodeCp1250(image, at, limit) !== originText(at, limit));
+  }
+  watchCells([dl]);
   if (state.status !== null) {
     add(panel, card('From the 0x81 status block', [['adminPin', state.status.adminPin]]));
   }
   note(
     panel,
-    'The PIN at image[1..4] is what the gate authenticates against; the strings at 0x11 and 0x16 ' +
-      'are the PC and SMS passwords. Nothing is ever sent anywhere else.',
+    'Type in a value to change it: the PIN is 4 bytes at 0x0001, the PC password 5 at 0x0011 and ' +
+      'the SMS password 9 at 0x0016, so longer text is cut to fit. Double-click a marked value to ' +
+      'put the loaded one back, and „Zapis to device" or „Save .bme" carries the change. The adminPin ' +
+      'under the status block is what the gate reports about itself, so it stays read-only.',
   );
 }
 
@@ -950,6 +997,7 @@ function showPanel(id: string): void {
     const active = p.getAttribute('data-panel') === id;
     p.hidden = !active;
     if (active) {
+      beginPaint();
       gridScroll = [];
       const painted = p.querySelectorAll('.table');
       for (let k = 0; k < painted.length; k++) {

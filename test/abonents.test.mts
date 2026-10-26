@@ -36,6 +36,7 @@ import {
   WYJ2_BIT,
   ADMIN_SLOTS,
   TOTAL_COUNT_AT,
+  ADMIN_FIELDS,
   readAbonents,
   readAdminInfo,
   readTotal,
@@ -111,6 +112,26 @@ function put(bytes: Uint8Array, at: number, text: string): void {
   eq(admin.devicePin, '1234');
   eq(admin.pcPassword, '4124');
   eq(admin.smsPassword, '5555');
+}
+
+// ---- the admin fields tab 2 edits, and the capacities the packer gives them ----
+{
+  const image = new Uint8Array(IMAGE_LEN);
+  image[0] = 0x07; // the head marker above the PIN, which an edit must never reach
+  const values = ['1234', '4124', '555555555'];
+  for (let i = 0; i < ADMIN_FIELDS.length; i++) {
+    const f = ADMIN_FIELDS[i];
+    for (let j = 0; j < f.limit; j++) {
+      image[f.at + j] = j < values[i].length ? values[i].charCodeAt(j) : 0;
+    }
+    eq(slotText(image, f.at, f.limit, 1), values[i]);
+  }
+  // each capacity stops exactly where the next field begins, so an edit cannot spill sideways
+  eq(ADMIN_FIELDS[0].at + ADMIN_FIELDS[0].limit, 5);
+  eq(ADMIN_FIELDS[1].at + ADMIN_FIELDS[1].limit, ADMIN_FIELDS[2].at);
+  eq(ADMIN_FIELDS[2].at + ADMIN_FIELDS[2].limit, FLAG_BASE);
+  eq(image[0], 0x07); // the PIN's 4 bytes stop at 0x0004
+  eq(image[FLAG_BASE], 0); // the SMS password's 9 bytes stop at 0x001E
 }
 
 // ---- the last flag byte sits immediately before the first phone ----

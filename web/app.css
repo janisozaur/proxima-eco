@@ -411,6 +411,24 @@ button.act[data-todo] {
   font-variant-numeric: tabular-nums;
 }
 
+/* the admin fields on tab 2, editable in place like the tab-1 cells */
+dd.edit {
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  padding: 1px 8px;
+  cursor: text;
+}
+
+dd.edit:hover {
+  border-style: solid;
+}
+
+dd.edit.dirty {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  background: var(--panel-2);
+}
+
 .mono {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: 12.5px;

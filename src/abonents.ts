@@ -224,6 +224,42 @@ export function countAbonents(image: Uint8Array): number {
 }
 
 /**
+ * The three fields the vendor's „Info admin." tab edits, and where the packer (`FUN_004CAD38`)
+ * puts them in the image. The capacities come from the packer's own write loops:
+ *
+ * * device PIN — 4 ASCII digits at `0x0001`. The head write keeps a capacity/length marker at
+ *   `image[0]` and the payload from `0x0001`; the `0x81` status block carries the same four bytes
+ *   at `b[9..12]`, which is what fixes the length at 4.
+ * * „Hasło computer PC" — a Delphi `string[5]`, so 5 payload bytes at `0x0011`. The packer loop
+ *   runs 6 times with the length clamped to 5, and its 6th write (a 0 at `0x0016`) is immediately
+ *   overwritten by the SMS field below it.
+ * * „Hasło SMS" — a `string[9]`, 9 payload bytes at `0x0016`. Its loop runs 10 times, and the 10th
+ *   write (a 0 at `0x001F`) is overwritten by the flag array, which the packer writes after it.
+ *
+ * So the usable payloads are exactly `0x0001..0x0004`, `0x0011..0x0015` and `0x0016..0x001E`:
+ * `image[0]` and `image[0x1F]` belong to other fields and are never written by an edit here.
+ */
+export const PIN_AT = 0x0001;
+export const PIN_LEN = 4;
+export const PC_AT = 0x0011;
+export const PC_LEN = 5;
+export const SMS_AT = 0x0016;
+export const SMS_LEN = 9;
+
+export interface AdminField {
+  label: string; // the vendor's own caption on tab 2
+  at: number; // where the payload starts in the image
+  limit: number; // bytes it holds, i.e. the capacity of the edit
+}
+
+/** The admin fields in the order the vendor's tab shows them. */
+export const ADMIN_FIELDS: AdminField[] = [
+  {label: 'PIN (gate)', at: PIN_AT, limit: PIN_LEN},
+  {label: 'Hasło computer PC', at: PC_AT, limit: PC_LEN},
+  {label: 'Hasło SMS', at: SMS_AT, limit: SMS_LEN},
+];
+
+/**
  * Admin PINs: `image[1..4]` is the PIN the gate authenticates against; the two NUL-terminated
  * ASCII strings at `0x11` and `0x16` are the "HasÅ¡o computer PC" and "HasÅ¡o SMS" fields.
  */
@@ -242,8 +278,8 @@ export function readAdminInfo(image: Uint8Array): AdminInfo {
     return s;
   };
   return {
-    devicePin: at(1),
-    pcPassword: at(0x11),
-    smsPassword: at(0x16),
+    devicePin: at(PIN_AT),
+    pcPassword: at(PC_AT),
+    smsPassword: at(SMS_AT),
   };
 }
