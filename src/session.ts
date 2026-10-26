@@ -3,7 +3,8 @@
  * verification step, and the live feed.
  */
 
-import type { Frame, Status, Transport } from './protocol.ts';
+import type { Frame, Status } from './protocol.ts';
+import type { Transport } from './transport.ts';
 import {
   CHUNK_LEN,
   CMD_LIVE,

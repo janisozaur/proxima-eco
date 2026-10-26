@@ -6,7 +6,8 @@
  * Nothing here involves vendor data; the image it serves is whatever the test hands it.
  */
 
-import type { Frame, Transport } from '../src/transport.ts';
+import type { Transport } from '../src/transport.ts';
+import type { Frame } from '../src/protocol.ts';
 import {
   CHUNK_LEN,
   CMD_LIVE,
@@ -26,6 +27,7 @@ import {
   encodePage,
   get24,
   put24,
+  responseOf,
 } from '../src/protocol.ts';
 
 /** The region table as measured on one gate; the sim only needs its window bounds. */
@@ -58,18 +60,18 @@ export class DeviceSim implements Transport {
   reply(opcode: number, body: Uint8Array): Frame {
     switch (opcode) {
       case CMD_STATUS:
-        return this.frame(CMD_STATUS, this.statusBody());
+        return this.frame(responseOf(CMD_STATUS), this.statusBody());
       case CMD_REGIONS:
-        return this.frame(CMD_REGIONS, this.regionBody());
+        return this.frame(responseOf(CMD_REGIONS), this.regionBody());
       case CMD_READ:
-        return this.frame(CMD_READ, this.readBody(body));
+        return this.frame(responseOf(CMD_READ), this.readBody(body));
       case CMD_WRITE:
-        return this.frame(CMD_WRITE, this.writeBody(body));
+        return this.frame(responseOf(CMD_WRITE), this.writeBody(body));
       case CMD_LOGIN:
-        return this.frame(CMD_LOGIN, this.loginBody(body));
+        return this.frame(responseOf(CMD_LOGIN), this.loginBody(body));
       case CMD_LIVE:
         this.live = body[0] !== 0;
-        return this.frame(CMD_LIVE, new Uint8Array(0));
+        return this.frame(responseOf(CMD_LIVE), new Uint8Array(0));
       default:
         throw new Error(`sim: unexpected request opcode 0x${opcode.toString(16)}`);
     }

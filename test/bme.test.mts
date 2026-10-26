@@ -3,7 +3,11 @@
  * and a synthetic full image round-trips.
  */
 
-import { eq } from 'node:assert';
+import { ok } from 'node:assert';
+
+function eq(actual: unknown, expected: unknown): void {
+  ok(actual === expected, `expected ${expected}, got ${actual}`);
+}
 import { assertImageSize, decodeBme, encodeBme } from '../src/bme.ts';
 import { IMAGE_LEN } from '../src/protocol.ts';
 

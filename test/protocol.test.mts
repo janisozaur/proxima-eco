@@ -2,7 +2,16 @@
  * Protocol primitives, checked against the measured constants.
  */
 
-import { eq, ok } from 'node:assert';
+import { ok } from 'node:assert';
+
+/** `node:assert`'s `eq` is not a named export in the typings; `ok` is. */
+function eq(actual: unknown, expected: unknown): void {
+  const same =
+    actual === expected ||
+    (typeof actual === 'object' && typeof expected === 'object' &&
+      JSON.stringify(actual) === JSON.stringify(expected));
+  ok(same, `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+}
 import {
   CHUNK_LEN,
   CMD_LOGIN,

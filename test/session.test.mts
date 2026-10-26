@@ -4,7 +4,15 @@
  * device that corrupts one page.
  */
 
-import { eq, ok } from 'node:assert';
+import { ok } from 'node:assert';
+
+function eq(actual: unknown, expected: unknown): void {
+  const same =
+    actual === expected ||
+    (typeof actual === 'object' && typeof expected === 'object' &&
+      JSON.stringify(actual) === JSON.stringify(expected));
+  ok(same, `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+}
 import { Session, PageRejected, SERVICE_PASSWORD } from '../src/session.ts';
 import { DeviceSim } from './device-sim.ts';
 import {

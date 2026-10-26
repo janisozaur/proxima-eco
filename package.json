@@ -2,17 +2,20 @@
   "name": "gate-web",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
   "description": "Portable WebHID client for the PROXIMA bram GSM gate",
   "engines": {
     "node": ">=24"
   },
   "dependencies": {
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0",
+    "@types/node": "^24.0.0"
   },
   "scripts": {
     "check": "tsc -p .",
-    "test": "node --test test/",
-    "build": "node scripts/build.ts",
+    "test": "node --test",
+    "build": "node scripts/build.mts",
     "serve": "node scripts/serve.ts dist"
   }
 }

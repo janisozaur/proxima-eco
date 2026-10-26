@@ -1,12 +1,14 @@
 {
   "compilerOptions": {
     "target": "es2022",
-    "lib": ["es2022", "dom"],
-    "module": true,
-    "strict": true,
+    "module": "nodenext",
     "moduleDetection": "force",
+    "moduleResolution": "nodenext",
+    "allowImportingTsExtensions": true,
+    "lib": ["es2022", "dom"],
+    "strict": true,
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "test", "scripts", "types"]
+  "include": ["src", "test", "scripts", "web", "types"]
 }

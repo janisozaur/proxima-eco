@@ -5,8 +5,8 @@
  */
 
 import { Session, SERVICE_PASSWORD, connectWebHid, webHidAvailable } from '../src/index.ts';
-import { encodeBme } from '../bme.ts';
-import { WINDOW_END, WINDOW_START, IMAGE_LEN } from '../protocol.ts';
+import { WINDOW_END, WINDOW_START, IMAGE_LEN } from '../src/protocol.ts';
+import { encodeBme } from '../src/bme.ts';
 
 function show(id: string, text: string): void {
   const el = document.getElementById(id);
@@ -45,7 +45,8 @@ async function run(password: string): Promise<void> {
       `${nonZero} non-zero. The .bme file is ready.`,
   );
 
-  const blob = new Blob([encodeBme(image)], { type: 'application/octet-stream' });
+  const encoded = encodeBme(image);
+  const blob = new Blob([new Uint8Array(encoded)], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   const a = document.getElementById('download');
   if (a !== null) {
@@ -56,7 +57,7 @@ async function run(password: string): Promise<void> {
 
 /** Entry: read the typed password and run the flow. */
 async function start(): Promise<void> {
-  const input = document.getElementById('password');
+  const input = document.getElementById('password') as HTMLInputElement | null;
   const password = input?.value ?? '';
   await run(password);
 }

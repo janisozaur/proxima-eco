@@ -10,6 +10,8 @@ import { build } from 'esbuild';
 
 const OUT = 'dist';
 
+await mkdir(OUT, { recursive: true });
+
 await build({
   entryPoints: ['web/main.ts'],
   bundle: true,
@@ -18,8 +20,6 @@ await build({
   outfile: `${OUT}/app.js`,
   sourcemap: true,
 });
-
-await mkdir(OUT);
 
 for (const name of ['index.html', 'manifest.json', 'sw.js', 'icon.svg']) {
   await copyFile(`web/${name}`, `${OUT}/${name}`);

@@ -9,7 +9,8 @@
  * filter and disambiguate by the measured `maxMessageSize === 64`.
  */
 
-import type { Frame, HidDevice, HidFilter, HidApi, NavigatorWithHid } from '../types/webhid.ts';
+import type { Frame } from './protocol.ts';
+import type { HidApi, HidDevice, HidFilter, HidCollection, HidDeviceInfo, NavigatorWithHid } from '../types/webhid.ts';
 import type { PushHandler, Transport } from './transport.ts';
 import { CMD_PUSH, REPORT_LEN, decodeFrame, encodeFrame, isResponseOf } from './protocol.ts';
 

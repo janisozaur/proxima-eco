@@ -18,7 +18,8 @@ const TYPES: Record<string, string> = {
 };
 
 const server = createServer(async (req, res) => {
-  const path = req.url === '/' ? '/index.html' : req.url;
+  const raw = req.url ?? '/';
+  const path = raw === '/' ? '/index.html' : raw;
   const name = path.split('?')[0].replace(/^\//, '');
   try {
     const body = await readFile(`${ROOT}/${name}`);
