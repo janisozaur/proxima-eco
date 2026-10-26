@@ -13,14 +13,21 @@ permissions:
 
 jobs:
   publish:
-    actions:
-      - exec: corepack enable
-      - exec: npm ci
-      - exec: npm run build
-      - exec: |
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          nvmrc: true
+      - run: npm ci
+      - run: npm run build
+      - run: |
+          git config author.name "github-actions[bot]"
+          git config author.email "41828826+github-actions[bot]@users.noreply.github.com"
           rm -rf docs
           mkdir -p docs
           cp -r dist/. docs/
+          touch docs/.nojekyll
           git add -f docs
           git commit -m "publish build [skip ci]"
           git push
