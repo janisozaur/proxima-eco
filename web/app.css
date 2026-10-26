@@ -429,6 +429,37 @@ dd.edit.dirty {
   background: var(--panel-2);
 }
 
+/* the two-state mode cells, which are clicked rather than typed into */
+dd.mode {
+  cursor: pointer;
+}
+
+dd.mode:hover {
+  background: var(--panel-2);
+}
+
+dd.mode.dirty {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  background: var(--panel-2);
+}
+
+/* the reaction grid: its text column is editable, its numeric columns are raw values */
+td.edit {
+  cursor: text;
+}
+
+td.edit.dirty {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  background: var(--panel-2);
+}
+
+td.raw {
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
 .mono {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: 12.5px;

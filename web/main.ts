@@ -33,6 +33,14 @@ import {
   WYJ2_BIT,
   ADMIN_SLOTS,
   ADMIN_FIELDS,
+  OUT_TENTHS_MAX,
+  outTenths,
+  outBistabilny,
+  writeOut,
+  CLIP_ROWS,
+  CLIP_TEXT_LEN,
+  readClipRows,
+  clipTextAt,
   readTotal,
   countGroups,
   countAbonents,
@@ -173,6 +181,7 @@ const LANDMARKS: Record<number, string> = {
  */
 const CELL_SLOTS = new Map<HTMLElement, CellSlot>();
 const FLAG_CELLS = new Map<HTMLElement, { at: number; bit: number }>();
+const OUT_CELLS = new Map<HTMLElement, { n: number }>(); // the „Czas monostabilnej pracy" cells
 
 interface CellSlot {
   at: number; // where the slot starts in the image
@@ -206,22 +215,17 @@ function originFlag(at: number, bit: number): boolean {
   return o !== null && (o[at] & bit) !== 0;
 }
 
-/** One observer for whichever panel is currently painted; re-rendering replaces it. */
-let cellObserver: MutationObserver | null = null;
+/** Every observer the current paint owns; re-rendering disconnects all of them. */
+let paintObservers: MutationObserver[] = [];
 
-/**
- * Every editable cell of the panel about to be painted. A panel owns its cells only while it is
- * painted, so a re-render drops the old ones and the observer watching them — otherwise a stale
- * cell could still be written into the image.
- */
 function beginPaint(): void {
   CELL_SLOTS.clear();
   FLAG_CELLS.clear();
-  const previous: MutationObserver | null = cellObserver;
-  if (previous !== null) {
-    previous.disconnect();
+  OUT_CELLS.clear();
+  for (const o of paintObservers) {
+    o.disconnect();
   }
-  cellObserver = null;
+  paintObservers = [];
 }
 
 /**
@@ -274,14 +278,89 @@ function cellMutations(ms: MutationRecord[]): void {
   }
 }
 
-/** Watch the containers the current paint owns. */
-function watchCells(roots: HTMLElement[]): void {
-  const obs = new MutationObserver(cellMutations);
+/** Watch the containers the current paint owns, with the handler that writes their cells back. */
+function watchCells(roots: HTMLElement[], handle: (ms: MutationRecord[]) => void): void {
+  const obs = new MutationObserver(handle);
   const watch = {childList: true, characterData: true, subtree: true};
   for (const r of roots) {
     obs.observe(r, watch);
   }
-  cellObserver = obs;
+  paintObservers.push(obs);
+}
+
+/**
+ * A typed „Czas monostabilnej pracy" cell is written back as tenths of a second, which is what the
+ * image holds, and the cell is then re-set to the canonical form so it always shows what the image
+ * actually says. The mode bit of the same word is left alone.
+ */
+function outMutations(ms: MutationRecord[]): void {
+  const img = state.image;
+  if (img === null) {
+    return;
+  }
+  let touched = false;
+  for (const m of ms) {
+    const node = m.target;
+    if (node === null) {
+      continue;
+    }
+    const cell = node instanceof HTMLElement ? node : node.parentElement;
+    if (cell === null) {
+      continue;
+    }
+    const f = OUT_CELLS.get(cell);
+    if (f === undefined) {
+      continue;
+    }
+    const tenths = parseTenths(cell.textContent);
+    writeOut(img, f.n, tenths, outBistabilny(img, f.n));
+    const shown = showTenths(tenths);
+    if (cell.textContent !== shown) {
+      cell.textContent = shown;
+    }
+    touched = true;
+    markCell(cell, tenths !== originTenths(f.n));
+  }
+  if (touched) {
+    renderFooter();
+  }
+}
+
+/** Read a typed time as tenths of a second: "5", "5.0" and "5,5" all mean 50. */
+function parseTenths(text: string): number {
+  let whole = '';
+  let tenth = '';
+  let after = false;
+  for (const ch of text.replace(',', '.')) {
+    if (ch === '.') {
+      after = true;
+    } else if (ch >= '0' && ch <= '9') {
+      if (!after) {
+        whole += ch;
+      } else if (tenth === '') {
+        tenth = ch;
+      }
+    }
+  }
+  const w = whole === '' ? 0 : Number(whole);
+  return w * 10 + (tenth === '' ? 0 : Number(tenth));
+}
+
+/** The vendor's own print of a time: `%.4d.%d` of tenths/10 and tenths%10. */
+function showTenths(tenths: number): string {
+  const t = tenths < 0 ? 0 : tenths > OUT_TENTHS_MAX ? OUT_TENTHS_MAX : tenths;
+  return `${String(Math.trunc(t / 10)).padStart(4, '0')}.${t % 10} s`;
+}
+
+/** The time and the mode output `n` held when the image was last read or loaded. */
+function originTenths(n: number): number {
+  const o = state.origin;
+  return o === null ? 0 : outTenths(o, n);
+}
+
+function originBistabilny(n: number): boolean {
+  const o = state.origin;
+  return o !== null && outBistabilny(o, n);
 }
 
 /**
@@ -493,7 +572,7 @@ function renderAbonents(panel: HTMLElement): void {
     }
   }
 
-  watchCells(bodies);
+  watchCells(bodies, cellMutations);
 
   note(
     panel,
@@ -548,7 +627,7 @@ function renderAdmin(panel: HTMLElement): void {
     dd.addEventListener('dblclick', () => resetCell(dd, at, limit, false, 0));
     markCell(dd, decodeCp1250(image, at, limit) !== originText(at, limit));
   }
-  watchCells([dl]);
+  watchCells([dl], cellMutations);
   if (state.status !== null) {
     add(panel, card('From the 0x81 status block', [['adminPin', state.status.adminPin]]));
   }
@@ -561,17 +640,120 @@ function renderAdmin(panel: HTMLElement): void {
   );
 }
 
+/**
+ * Tab 3. The vendor's form has two halves here. The group box `GB_UstWyjsc`, captioned „Reakcje
+ * wyjść na CLIP:", holds the two `CB_TrybPracyWyjscia1/2` combo boxes — whose only items are
+ * „bistabilny" and „monostabilny" — and the two `ME_CzasWlaczeniaWy1/2` memos with edit mask
+ * `9999.9;1;0`. Those four values are decoded and editable: each output owns a 16-bit word in the
+ * config head, low 15 bits = the monostable time in tenths of a second, bit 15 = bistabilny.
+ *
+ * The other half is the group box `GB_ReakcjaNaWejscia`, captioned „Reakcja wyjść na zdarzenia od
+ * wejść i przycisków:", whose `LV_ReakcjeWejsc` grid is the 300-row table at `0x8CBF`. Only its row
+ * framing and its 59-byte text column are decoded, so the numeric columns are printed as the raw
+ * values they are rather than dressed up as the vendor's „Zdarzenie"/„Reakcja" captions.
+ */
 function renderReakcje(panel: HTMLElement): void {
-  add(panel, card('Clip i Wej->Wyj', [
-    ['Reakcje wyjść na CLIP', 'not decoded'],
-    ['Tryb pracy wyjście 1', 'not decoded'],
-    ['Tryb pracy wyjście 2', 'not decoded'],
-    ['Czas monostabilnej pracy', 'not decoded'],
-  ]));
+  const image = state.image;
+  if (image === null) {
+    note(panel, 'No image — the output settings live in the config head at 0x000A.');
+    return;
+  }
+
+  const c = add(panel, el('div', 'card', ''));
+  add(c, el('h2', '', 'Reakcje wyjść na CLIP:'));
+  const dl = add(c, el('dl', 'dl', ''));
+  for (const n of [1, 2]) {
+    add(dl, el('dt', '', `Tryb pracy wyjścia ${n}:`));
+    const mode = add(dl, el('dd', 'mode', outBistabilny(image, n) ? 'bistabilny' : 'monostabilny'));
+    mode.addEventListener('click', () => {
+      const img = state.image;
+      if (img === null) {
+        return;
+      }
+      const now = !outBistabilny(img, n);
+      writeOut(img, n, outTenths(img, n), now);
+      mode.textContent = now ? 'bistabilny' : 'monostabilny';
+      markCell(mode, now !== originBistabilny(n));
+      renderFooter();
+    });
+    mode.addEventListener('dblclick', () => {
+      const img = state.image;
+      if (img === null) {
+        return;
+      }
+      const want = originBistabilny(n);
+      writeOut(img, n, outTenths(img, n), want);
+      mode.textContent = want ? 'bistabilny' : 'monostabilny';
+      markCell(mode, false);
+      renderFooter();
+    });
+
+    add(dl, el('dt', '', `Czas monostabilnej pracy ${n}:`));
+    const time = add(dl, el('dd', 'edit', showTenths(outTenths(image, n))));
+    time.setAttribute('contenteditable', 'true');
+    time.spellcheck = false;
+    OUT_CELLS.set(time, {n});
+    markCell(time, outTenths(image, n) !== originTenths(n));
+    time.addEventListener('dblclick', () => {
+      const img = state.image;
+      if (img === null) {
+        return;
+      }
+      const want = originTenths(n);
+      writeOut(img, n, want, outBistabilny(img, n));
+      time.textContent = showTenths(want);
+      markCell(time, false);
+      renderFooter();
+    });
+  }
+  watchCells([dl], outMutations);
   note(
     panel,
-    'These switches live in the config head (0x000B–0x00B2, a field of 0x03 markers). Their ' +
-      'encoding has not been decoded, so the tab lists the fields without values.',
+    'Click a Tryb cell to flip it between bistabilny and monostabilny; type in a Czas cell to change ' +
+      'the time, in seconds with one decimal — it is stored as tenths, so 5.0 s is 50. Double-click ' +
+      'either to put the loaded value back. Both halves of a word are written together, so flipping ' +
+      'the mode never disturbs the time and vice versa.',
+  );
+
+  const rows = readClipRows(image);
+  const wrap = add(panel, el('div', 'table', ''));
+  const table = add(wrap, el('table', '', ''));
+  add(table, el('caption', '', 'Reakcja wyjść na zdarzenia od wejść i przycisków:'));
+  const head = add(table, el('thead', '', ''));
+  row(
+    head,
+    'th',
+    [
+      ['th', 'Lp'],
+      ['th', 'u16 @+0'],
+      ['th', 'u8 @+2'],
+      ['th', 'u16 @+3'],
+      ['th', 'Właściwości'],
+    ],
+  );
+  const body = add(table, el('tbody', '', ''));
+  for (const r of rows) {
+    const tr = add(body, el('tr', '', ''));
+    add(tr, el('td', 'num', String(r.poz).padStart(3, '0')));
+    add(tr, el('td', 'raw', String(r.a)));
+    add(tr, el('td', 'raw', String(r.b)));
+    add(tr, el('td', 'raw', String(r.group)));
+    const at = clipTextAt(r.poz);
+    const text = add(tr, el('td', 'edit', r.text));
+    text.setAttribute('contenteditable', 'true');
+    text.spellcheck = false;
+    CELL_SLOTS.set(text, {at, limit: CLIP_TEXT_LEN, phone: false, poz: 0});
+    text.addEventListener('dblclick', () => resetCell(text, at, CLIP_TEXT_LEN, false, 0));
+  }
+  watchCells([body], cellMutations);
+  note(
+    panel,
+    `The image holds ${rows.length} of ${CLIP_ROWS} reaction rows at 0x8CBF; a row is used when its ` +
+      'u16 at +3 is neither 0 nor 0xFFFF, which is the test the vendor\'s own loader uses before it ' +
+      'adds a row to the list. The 59 bytes at +5 are copied into the image verbatim, so that column ' +
+      'is editable; the three numeric columns are printed as the raw values because their encoding ' +
+      'is not decoded yet — the vendor draws them as „Zdarzenie" and „Reakcja", and inventing those ' +
+      'labels here would be a guess.',
   );
 }
 

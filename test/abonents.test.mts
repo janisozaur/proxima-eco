@@ -51,6 +51,19 @@ import {
   writeTotal,
   countGaps,
   compactAbonents,
+  OUT1_AT,
+  OUT2_AT,
+  OUT_TENTHS_MAX,
+  outTenths,
+  outBistabilny,
+  writeOut,
+  CLIP_AT,
+  CLIP_ROWS,
+  CLIP_ROW,
+  CLIP_TEXT_AT,
+  CLIP_TEXT_LEN,
+  readClipRows,
+  clipTextAt,
 } from '../src/abonents.ts';
 import { IMAGE_LEN } from '../src/protocol.ts';
 
@@ -261,4 +274,63 @@ function put(bytes: Uint8Array, at: number, text: string): void {
   eq(image[FLAG_BASE + 18], WYJ1_BIT | WYJ2_BIT);
   eq(image[PHONE_BASE + 2 * PHONE_SLOT] !== 0, true); // admin slot 3 did not move
   eq(image[PHONE_BASE + 3 * PHONE_SLOT], 0); // admin slot 4 is still a hole
+}
+
+// ---- the two output words in the config head: time in tenths, bit 15 = bistabilny ----
+{
+  const image = new Uint8Array(IMAGE_LEN);
+  writeOut(image, 1, 50, false); // what both dumps hold: 5.0 s, monostabilny
+  writeOut(image, 2, 50, false);
+  eq(outTenths(image, 1), 50);
+  eq(outBistabilny(image, 1), false);
+  eq(image[OUT1_AT], 50);
+  eq(image[OUT1_AT + 1], 0);
+
+  writeOut(image, 1, OUT_TENTHS_MAX + 500, true); // over the client's clamp, mode flipped
+  eq(outTenths(image, 1), OUT_TENTHS_MAX);
+  eq(outBistabilny(image, 1), true);
+  eq(image[OUT1_AT], 0xff);
+  eq(image[OUT1_AT + 1], 0xff); // 0x7fff | 0x8000
+
+  writeOut(image, 1, 5, true);
+  eq(outTenths(image, 1), 5);
+  eq(outBistabilny(image, 1), true);
+  eq(image[OUT1_AT], 5);
+  eq(image[OUT1_AT + 1], 0x80);
+
+  // the two outputs are separate words, so editing one cannot reach the other
+  eq(outTenths(image, 2), 50);
+  eq(outBistabilny(image, 2), false);
+  eq(OUT2_AT - OUT1_AT, 2);
+}
+
+// ---- the reaction rows at 0x8CBF, and which of them are used ----
+{
+  const image = new Uint8Array(IMAGE_LEN);
+  const at = CLIP_AT;
+  image[at] = 0x13; // u16 @+0 = 19
+  image[at + 2] = 6; // u8 @+2
+  image[at + 3] = 1; // u16 @+3 = 1, so the row is used
+  const test = [0x54, 0x45, 0x53, 0x54]; // "TEST"
+  for (let i = 0; i < test.length; i++) {
+    image[at + CLIP_TEXT_AT + i] = test[i];
+  }
+  const rows = readClipRows(image);
+  eq(rows.length, 1);
+  eq(rows[0].poz, 1);
+  eq(rows[0].a, 19);
+  eq(rows[0].b, 6);
+  eq(rows[0].group, 1);
+  eq(rows[0].text, 'TEST');
+  eq(clipTextAt(1), CLIP_AT + CLIP_TEXT_AT);
+  eq(clipTextAt(CLIP_ROWS), CLIP_AT + (CLIP_ROWS - 1) * CLIP_ROW + CLIP_TEXT_AT);
+
+  // an all-0xFF row is not used: its group is 0xFFFF, which the loader skips
+  const erased = new Uint8Array(IMAGE_LEN).fill(0xff);
+  eq(readClipRows(erased).length, 0);
+  // neither is a zero-filled row: its group is 0
+  image[at + 3] = 0;
+  image[at + 4] = 0;
+  eq(readClipRows(image).length, 0);
+  eq(CLIP_TEXT_LEN, 59);
 }

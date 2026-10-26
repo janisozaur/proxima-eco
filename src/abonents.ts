@@ -260,8 +260,112 @@ export const ADMIN_FIELDS: AdminField[] = [
 ];
 
 /**
- * Admin PINs: `image[1..4]` is the PIN the gate authenticates against; the two NUL-terminated
- * ASCII strings at `0x11` and `0x16` are the "HasÅ¡o computer PC" and "HasÅ¡o SMS" fields.
+ * The two output settings the vendor's „Reakcje wyjść na CLIP" group box holds, and where the
+ * packer (`FUN_004CAD38`) puts them. Each output owns one 16-bit little-endian word:
+ *
+ * ```
+ * image[0x0A..0x0B]  output 1     image[0x0C..0x0D]  output 2
+ * ```
+ *
+ * The low 15 bits are the monostable working time in **tenths of a second** — the client clamps it
+ * to `0x7FFF` (3276.7 s) when a `TMemoEdit` with edit mask `9999.9;1;0` sets it, and prints it as
+ * `%.4d.%d`. Bit 15 is the working mode: the packer does `image[at + 1] |= 0x80` when the mode
+ * global is non-zero, and the `TComboBox OnChange` handler sets that global to 1 for the first item
+ * („bistabilny") and to 0 for the second („monostabilny", the branch that also reads the time). So
+ * bit 15 set means bistabilny, and a cleared bit means monostabilny — which is the mode that needs
+ * a time, and both dumps have it cleared with a time of 50 tenths = 5.0 s.
+ */
+export const OUT1_AT = 0x000a;
+export const OUT2_AT = 0x000c;
+export const OUT_TENTHS_MAX = 0x7fff;
+export const OUT_BISTABILNY = 0x8000;
+
+/** The monostable time of output `n` (1 or 2), in tenths of a second, flag bit excluded. */
+export function outTenths(image: Uint8Array, n: number): number {
+  const at = n === 1 ? OUT1_AT : OUT2_AT;
+  return (image[at] | (image[at + 1] << 8)) & (OUT_TENTHS_MAX as number);
+}
+
+/** Whether output `n` works bistably (its time is then meaningless). */
+export function outBistabilny(image: Uint8Array, n: number): boolean {
+  const at = n === 1 ? OUT1_AT : OUT2_AT;
+  return (image[at + 1] & (OUT_BISTABILNY >> 8)) !== 0;
+}
+
+/** Write both halves of one output's word at once, so the flag bit and the time cannot drift. */
+export function writeOut(image: Uint8Array, n: number, tenths: number, bistabilny: boolean): void {
+  const at = n === 1 ? OUT1_AT : OUT2_AT;
+  const t = tenths < 0 ? 0 : tenths > OUT_TENTHS_MAX ? OUT_TENTHS_MAX : tenths;
+  image[at] = t & 0xff;
+  image[at + 1] = ((t >> 8) & 0x7f) | (bistabilny ? 0x80 : 0);
+}
+
+/**
+ * The reaction list — the vendor's `LV_ReakcjeWejsc` grid on the same tab, whose group box is
+ * captioned „Reakcja wyjść na zdarzenia od wejść i przycisków". The packer writes 300 rows of 64
+ * bytes at `0x8CBF`, and both the packer and the unpacker agree on the row framing:
+ *
+ * ```
+ * +0..1  u16   field A
+ * +2     u8    field B
+ * +3..4  u16   group
+ * +5..63 59 B  text, copied byte for byte
+ * ```
+ *
+ * A row is **used** exactly when its `group` is neither 0 nor `0xFFFF` — that is the test the
+ * unpacker uses before it appends a row to the client's list, and it is why the unused rows read as
+ * an all-`0xFF` span rather than as data. The client keeps 33 words (66 B) per row and the image
+ * keeps 64, which is where the high byte of field B and the client's last byte are dropped.
+ *
+ * What `A`, `B` and `group` mean is still open: the CSV export uses `group` as an index into an
+ * 11-entry table and switches on `B` to pick how the row prints, but neither table has been pinned
+ * to the vendor's own captions yet. The text is copied verbatim, so it is the only column this
+ * client edits.
+ */
+export const CLIP_AT = 0x8cbf;
+export const CLIP_ROWS = 300;
+export const CLIP_ROW = 64;
+export const CLIP_TEXT_AT = 5;
+export const CLIP_TEXT_LEN = 59;
+
+export interface ClipRow {
+  poz: number; // 1-based row number, the vendor's "Lp" column
+  at: number; // where the row starts in the image
+  a: number; // u16 at +0, meaning not decoded
+  b: number; // u8 at +2, meaning not decoded
+  group: number; // u16 at +3, meaning not decoded
+  text: string; // the 59 text bytes at +5
+}
+
+/** The rows the image actually holds, in order. */
+export function readClipRows(image: Uint8Array): ClipRow[] {
+  const out: ClipRow[] = [];
+  for (let r = 0; r < CLIP_ROWS; r++) {
+    const at = CLIP_AT + r * CLIP_ROW;
+    const group = image[at + 3] | (image[at + 4] << 8);
+    if (group === 0 || group === 0xffff) {
+      continue;
+    }
+    out.push({
+      poz: r + 1,
+      at,
+      a: image[at] | (image[at + 1] << 8),
+      b: image[at + 2],
+      group,
+      text: decodeCp1250(image, at + CLIP_TEXT_AT, CLIP_TEXT_LEN),
+    });
+  }
+  return out;
+}
+
+/** Where the text of a reaction row lives, for an in-place edit. */
+export function clipTextAt(poz: number): number {
+  return CLIP_AT + (poz - 1) * CLIP_ROW + CLIP_TEXT_AT;
+}
+/**
+ * Admin PINs read through the field table above: `image[1..4]` is the PIN the gate authenticates
+ * against, and the two NUL-terminated ASCII strings at `0x11` and `0x16` are the „Hasło computer
+ * PC" and „Hasło SMS" fields.
  */
 export interface AdminInfo {
   devicePin: string; // image[1..4]
