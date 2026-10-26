@@ -31,6 +31,10 @@ import {
   writeAbonentPhone,
   writeAbonentName,
   setAbonentOutput,
+  clearAbonent,
+  nextFreeSlot,
+  lastOccupied,
+  writeTotal,
 } from '../src/abonents.ts';
 import { IMAGE_LEN } from '../src/protocol.ts';
 
@@ -156,4 +160,39 @@ function put(bytes: Uint8Array, at: number, text: string): void {
   eq(after[2].wyj2, true);
   eq(after[2].admin, true);
   eq(countAbonents(image), 5);
+}
+
+// ---- adding and removing entries, and the entry bound that goes with them ----
+{
+  const image = new Uint8Array(IMAGE_LEN);
+  writeTotal(image, 3);
+  for (const k of [1, 2, 3]) {
+    writeAbonentPhone(image, k, `+48000000${k}0`);
+    writeAbonentName(image, k, `n${k}`);
+    image[FLAG_BASE + k - 1] = WYJ1_BIT | WYJ2_BIT;
+  }
+  eq(readTotal(image), 3);
+  eq(lastOccupied(image), 3);
+
+  // the vendor's add button appends at the bound, so the bound moves first
+  writeTotal(image, readTotal(image) + 1);
+  writeAbonentPhone(image, readTotal(image), '+48666000004');
+  eq(lastOccupied(image), 4);
+  eq(countAbonents(image), 4);
+
+  // removing clears the phone, the name and the flag byte in one go
+  clearAbonent(image, 2);
+  eq(image[PHONE_BASE + 1 * PHONE_SLOT], 0);
+  eq(image[NAME_BASE + 1 * NAME_SLOT], 0);
+  eq(image[FLAG_BASE + 1], 0);
+  eq(countAbonents(image), 3);
+  eq(nextFreeSlot(image, 1, ADMIN_SLOTS), 2); // the hole is reusable
+
+  // clearing a middle entry leaves the bound alone; clearing the last one shrinks it
+  clearAbonent(image, 3);
+  eq(readTotal(image), 4);
+  clearAbonent(image, 4);
+  writeTotal(image, lastOccupied(image));
+  eq(readTotal(image), 1);
+  eq(countAbonents(image), 1);
 }

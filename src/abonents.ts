@@ -111,6 +111,46 @@ export function setAbonentOutput(image: Uint8Array, poz: number, bit: number, on
   image[at] = on ? image[at] | bit : image[at] & ~bit & 0xff;
 }
 
+/**
+ * Add or clear an entry. The vendor's loader (`FUN_004C7E94`) walks slots `1..total` and puts each
+ * one into exactly one of the two grids: the `administratorzy` grid gets slot `k` only when `k ≤ 16`
+ * **and the phone is not empty**, while the `uŁytkownicy` grid gets every slot from 17 up whether or
+ * not it is populated. So adding is writing a phone into a free slot and removing is clearing one,
+ * and a cleared slot also loses its name and its flag byte — which is what the dumps show at the
+ * holes inside `1..16`.
+ */
+export function clearAbonent(image: Uint8Array, poz: number): void {
+  writeAbonentPhone(image, poz, '');
+  writeAbonentName(image, poz, '');
+  image[FLAG_BASE + (poz - 1)] = 0;
+}
+
+/** The first empty slot in `from..to` (1-based, inclusive), or 0 when the region is full. */
+export function nextFreeSlot(image: Uint8Array, from: number, to: number): number {
+  for (let k = Math.max(1, from); k <= Math.min(ABONENT_SLOTS, to); k++) {
+    if (image[PHONE_BASE + (k - 1) * PHONE_SLOT] === 0) {
+      return k;
+    }
+  }
+  return 0;
+}
+
+/** The last slot that still holds an entry — the entry bound after a remove. */
+export function lastOccupied(image: Uint8Array): number {
+  for (let k = ABONENT_SLOTS; k >= 1; k--) {
+    if (image[PHONE_BASE + (k - 1) * PHONE_SLOT] !== 0) {
+      return k;
+    }
+  }
+  return 0;
+}
+
+/** Write the entry bound the head keeps at `0x000F`. */
+export function writeTotal(image: Uint8Array, total: number): void {
+  image[TOTAL_COUNT_AT] = total & 0xff;
+  image[TOTAL_COUNT_AT + 1] = (total >> 8) & 0xff;
+}
+
 /** Occupied-slot count, which is what the vendor status bar reports as "abonenci: n/1000". */
 export function countAbonents(image: Uint8Array): number {
   let n = 0;

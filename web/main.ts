@@ -22,7 +22,6 @@ import { assertImageSize, decodeBme, encodeBme } from '../src/bme.ts';
 import { IMAGE_LEN, REGION_TABLE_DWORDS } from '../src/protocol.ts';
 import {
   ABONENT_SLOTS,
-  Abonent,
   FLAG_BASE,
   PHONE_BASE,
   PHONE_SLOT,
@@ -33,11 +32,15 @@ import {
   WYJ1_BIT,
   WYJ2_BIT,
   ADMIN_SLOTS,
-  readAbonents,
   readAdminInfo,
   readTotal,
   countGroups,
   countAbonents,
+  writeAbonentPhone,
+  clearAbonent,
+  nextFreeSlot,
+  lastOccupied,
+  writeTotal,
 } from '../src/abonents.ts';
 import { decodeCp1250, encodeCp1250 } from '../src/cp1250.ts';
 import type { Transport } from '../src/transport.ts';
@@ -158,14 +161,25 @@ const LANDMARKS: Record<number, string> = {
 /**
  * Tab 1 is **two grids**, exactly as the vendor's form has them: `LB_TytulUzytkownikow` +
  * `LV_Uzytkownicy` and `LB_TytulAdministratorow` + `LV_Administratorzy`. Both read the same
- * thousand-slot arrays; the split is the count the config head keeps at `0x0E`.
+ * thousand-slot arrays, and the loader (`FUN_004C7E94`) decides which one a slot belongs to:
+ * slots `1..16` are the `administratorzy` region — a fixed 16 slots, not a stored count — and
+ * slots `17..` are the users.
  *
  * Cells are editable in place: the phone and name cells are `contenteditable` and a mutation
  * writes them straight back into the image slot, while a click on a checkbox cell toggles the
- * flag bit — the same gesture the vendor's `TGridClickHandler` performs.
+ * flag bit — the same gesture the vendor's `TGridClickHandler` performs. A phone that goes from
+ * empty to filled (or the other way) adds or removes an entry, which also moves the entry bound
+ * the head keeps at `0x000F`.
  */
-const CELL_SLOTS = new Map<HTMLElement, { at: number; limit: number }>();
+const CELL_SLOTS = new Map<HTMLElement, CellSlot>();
 const FLAG_CELLS = new Map<HTMLElement, { at: number; bit: number }>();
+
+interface CellSlot {
+  at: number; // where the slot starts in the image
+  limit: number; // bytes the slot holds
+  phone: boolean; // a Telefon cell, i.e. an entry's presence
+  poz: number; // 1-based slot number
+}
 
 function paintFlag(cell: HTMLElement, on: boolean): void {
   cell.className = on ? 'td.flagOn' : 'td.flagOff';
@@ -195,6 +209,71 @@ function originFlag(at: number, bit: number): boolean {
 /** One observer for whichever grids are currently painted; re-rendering replaces it. */
 let cellObserver: MutationObserver | null = null;
 
+/**
+ * Which slots each grid shows, mirroring the vendor's own loader (`FUN_004C7E94`): it walks slots
+ * `1..total` and hands each one to exactly one of the two list views. The `administratorzy` view
+ * takes slot `k` only when `k ≤ 16` **and its phone is not empty**, so an empty administrator slot
+ * has no row at all; the `uŁytkownicy` view takes every slot from 17 up, empty ones included. The
+ * row's index field is the global slot number, which is what the `Poz.` column prints.
+ */
+function phoneAt(image: Uint8Array, poz: number): string {
+  return decodeCp1250(image, PHONE_BASE + (poz - 1) * PHONE_SLOT, PHONE_MAX);
+}
+
+function adminSlots(image: Uint8Array): number[] {
+  const out: number[] = [];
+  for (let k = 1; k <= ADMIN_SLOTS; k++) {
+    if (phoneAt(image, k) !== '') {
+      out.push(k);
+    }
+  }
+  return out;
+}
+
+function userSlots(image: Uint8Array): number[] {
+  const total = Math.min(ABONENT_SLOTS, readTotal(image));
+  const out: number[] = [];
+  for (let k = ADMIN_SLOTS + 1; k <= total; k++) {
+    out.push(k);
+  }
+  return out;
+}
+
+/** Keep the head's entry bound in step with the table after an entry is added or removed. */
+function syncBound(image: Uint8Array, poz: number): void {
+  const total = readTotal(image);
+  if (poz > total) {
+    writeTotal(image, poz);
+    return;
+  }
+  const last = lastOccupied(image);
+  if (poz >= total && last < total) {
+    writeTotal(image, last);
+  }
+}
+
+/** Put the loaded value back into one cell, re-drawing the grids when that changes which rows exist. */
+function resetCell(cell: HTMLElement, at: number, limit: number, phone: boolean, poz: number): void {
+  const img = state.image;
+  if (img === null) {
+    return;
+  }
+  const back = originText(at, limit);
+  const before = decodeCp1250(img, at, limit);
+  encodeCp1250(img, at, limit, back);
+  cell.textContent = back;
+  markCell(cell, false);
+  if (phone && (before === '') !== (back === '')) {
+    if (back === '') {
+      clearAbonent(img, poz);
+    }
+    syncBound(img, poz);
+    repaint();
+    return;
+  }
+  renderFooter();
+}
+
 function renderAbonents(panel: HTMLElement): void {
   const image = state.image;
   if (image === null) {
@@ -211,14 +290,13 @@ function renderAbonents(panel: HTMLElement): void {
   }
   cellObserver = null;
 
-  const rows = readAbonents(image);
-  const groups: [string, Abonent[]][] = [
-    ['Abonenci - uŁytkownicy reakcja na CLIP:', rows.filter((a) => !a.admin)],
-    ['Abonenci - administratorzy - reakcja na CLIP :', rows.filter((a) => a.admin)],
+  const groups: [string, number[]][] = [
+    ['Abonenci - uŁytkownicy reakcja na CLIP:', userSlots(image)],
+    ['Abonenci - administratorzy - reakcja na CLIP :', adminSlots(image)],
   ];
   const bodies: HTMLElement[] = [];
-  for (const [title, list] of groups) {
-    if (list.length === 0) {
+  for (const [title, slots] of groups) {
+    if (slots.length === 0) {
       continue;
     }
     const wrap = add(panel, el('div', 'table', ''));
@@ -229,48 +307,53 @@ function renderAbonents(panel: HTMLElement): void {
     const body = add(table, el('tbody', '', ''));
     bodies.push(body);
 
-    for (const a of list) {
+    for (const poz of slots) {
       const tr = add(body, el('tr', '', ''));
-      add(tr, el('td', 'num', String(a.poz).padStart(4, '0')));
-      const phone = add(tr, el('td', 'phone', a.phone));
-      const name = add(tr, el('td', 'edit', a.name));
-      const slots: [HTMLElement, number, number][] = [
-        [phone, PHONE_BASE + (a.poz - 1) * PHONE_SLOT, PHONE_MAX],
-        [name, NAME_BASE + (a.poz - 1) * NAME_SLOT, NAME_MAX],
+      add(tr, el('td', 'num', String(poz).padStart(4, '0')));
+      const phone = add(tr, el('td', 'phone', phoneAt(image, poz)));
+      const name = add(tr, el('td', 'edit', decodeCp1250(image, NAME_BASE + (poz - 1) * NAME_SLOT, NAME_MAX)));
+      const textCells: { cell: HTMLElement; at: number; limit: number; phone: boolean }[] = [
+        {
+          cell: phone,
+          at: PHONE_BASE + (poz - 1) * PHONE_SLOT,
+          limit: PHONE_MAX,
+          phone: true,
+        },
+        {
+          cell: name,
+          at: NAME_BASE + (poz - 1) * NAME_SLOT,
+          limit: NAME_MAX,
+          phone: false,
+        },
       ];
-      for (const [cell, at, limit] of slots) {
-        cell.setAttribute('contenteditable', 'true');
-        cell.setAttribute('spellcheck', 'false');
-        CELL_SLOTS.set(cell, { at, limit });
-        markCell(cell, decodeCp1250(image, at, limit) !== originText(at, limit));
-        cell.addEventListener('dblclick', () => {
-          const img = state.image;
-          if (img === null) {
-            return;
-          }
-          const back = originText(at, limit);
-          encodeCp1250(img, at, limit, back);
-          cell.textContent = back;
-          markCell(cell, false);
-          renderFooter();
+      for (const t of textCells) {
+        const at = t.at;
+        const limit = t.limit;
+        t.cell.setAttribute('contenteditable', 'true');
+        t.cell.setAttribute('spellcheck', 'false');
+        CELL_SLOTS.set(t.cell, { at, limit, phone: t.phone, poz });
+        markCell(t.cell, decodeCp1250(image, at, limit) !== originText(at, limit));
+        t.cell.addEventListener('dblclick', () => {
+          resetCell(t.cell, at, limit, t.phone, poz);
         });
       }
-      const flags: [[number, boolean], [number, boolean]] = [[WYJ1_BIT, a.wyj1], [WYJ2_BIT, a.wyj2]];
-      for (const [bit, on] of flags) {
+      const flagAt = FLAG_BASE + (poz - 1);
+      const flag = image[flagAt];
+      const bits: [number, boolean][] = [[WYJ1_BIT, (flag & WYJ1_BIT) !== 0], [WYJ2_BIT, (flag & WYJ2_BIT) !== 0]];
+      for (const [bit, on] of bits) {
         const cell = add(tr, el('td', 'flagOff', ''));
         paintFlag(cell, on);
-        const at = FLAG_BASE + (a.poz - 1);
-        FLAG_CELLS.set(cell, { at, bit });
-        markCell(cell, on !== originFlag(at, bit));
+        FLAG_CELLS.set(cell, { at: flagAt, bit });
+        markCell(cell, on !== originFlag(flagAt, bit));
         cell.addEventListener('click', () => {
           const img = state.image;
           if (img === null) {
             return;
           }
-          const now = (img[at] & bit) === 0;
-          img[at] = (now ? img[at] | bit : img[at] & ~bit) & 0xff;
+          const now = (img[flagAt] & bit) === 0;
+          img[flagAt] = (now ? img[flagAt] | bit : img[flagAt] & ~bit) & 0xff;
           paintFlag(cell, now);
-          markCell(cell, now !== originFlag(at, bit));
+          markCell(cell, now !== originFlag(flagAt, bit));
           renderFooter();
         });
         cell.addEventListener('dblclick', () => {
@@ -278,8 +361,8 @@ function renderAbonents(panel: HTMLElement): void {
           if (img === null) {
             return;
           }
-          const want = originFlag(at, bit);
-          img[at] = (want ? img[at] | bit : img[at] & ~bit) & 0xff;
+          const want = originFlag(flagAt, bit);
+          img[flagAt] = (want ? img[flagAt] | bit : img[flagAt] & ~bit) & 0xff;
           paintFlag(cell, want);
           markCell(cell, false);
           renderFooter();
@@ -289,7 +372,8 @@ function renderAbonents(panel: HTMLElement): void {
   }
 
   const obs = new MutationObserver((ms) => {
-    if (state.image === null) {
+    const img = state.image;
+    if (img === null) {
       return;
     }
     let touched = false;
@@ -306,9 +390,19 @@ function renderAbonents(panel: HTMLElement): void {
       if (slot === undefined) {
         continue;
       }
-      encodeCp1250(state.image, slot.at, slot.limit, cell.textContent);
+      const before = decodeCp1250(img, slot.at, slot.limit);
+      encodeCp1250(img, slot.at, slot.limit, cell.textContent);
+      if (slot.phone && (before === '') !== (cell.textContent === '')) {
+        // an entry was added or removed: the grids and the head's bound follow the table
+        if (cell.textContent === '') {
+          clearAbonent(img, slot.poz);
+        }
+        syncBound(img, slot.poz);
+        repaint();
+        return;
+      }
       touched = true;
-      markCell(cell, decodeCp1250(state.image, slot.at, slot.limit) !== originText(slot.at, slot.limit));
+      markCell(cell, decodeCp1250(img, slot.at, slot.limit) !== originText(slot.at, slot.limit));
     }
     if (touched) {
       renderFooter();
@@ -325,12 +419,21 @@ function renderAbonents(panel: HTMLElement): void {
     'Type in a Telefon / Nazwa cell to change it, click a Wyjście cell to toggle it, double-click a ' +
       'marked cell to put the loaded value back. „Zapis to device" or „Save .bme" carries the change.',
   );
+  note(
+    panel,
+    'Add / remove: the uŁytkownicy grid shows every slot up to the entry bound, so typing a phone ' +
+      'into an empty row adds an entry and clearing a Telefon cell removes one — its Nazwa and both ' +
+      'Wyjście switches go with it. „Dodaj nwego abonenta" appends at the end like the vendor does, ' +
+      '„Dodaj administratory" fills the first hole in the fixed 16-slot administratorzy region, which ' +
+      'has no empty rows to type into.',
+  );
   const total = readTotal(image);
   note(
     panel,
     `The phone book is two fixed regions: slots 0001…${String(ADMIN_SLOTS).padStart(4, '0')} are the ` +
-      `„administratorzy" grid (${ADMIN_SLOTS} slots, some unpopulated) and 0017… are „uŁytkownicy"; ` +
-      `the head keeps the entry bound ${total} at 0x000F.`,
+      `„administratorzy" grid (${ADMIN_SLOTS} slots, only the populated ones get a row) and 0017… are ` +
+      `„uŁytkownicy"; the head keeps the entry bound ${total} at 0x000F, which is where the next ` +
+      `„Dodaj nwego abonenta" lands.`,
   );
 }
 
@@ -605,6 +708,51 @@ function saveFile(): void {
   add(actions, a);
 }
 
+/**
+ * Add an entry, the way the vendor's own „Dodaj nwego abonenta" button does (`FUN_004D03A8`): it
+ * appends at the end of the abonent array, so the new row always lands in the uŁytkownicy region,
+ * and when the user has not typed a phone it writes the placeholder `+4866600NNNN`.
+ */
+function addAbonent(): void {
+  const img = state.image;
+  if (img === null) {
+    fail('No image loaded.');
+    return;
+  }
+  const total = readTotal(img);
+  if (total >= ABONENT_SLOTS) {
+    fail('The phone book is full — all 1000 slots are used.');
+    return;
+  }
+  const poz = total + 1;
+  writeTotal(img, poz);
+  writeAbonentPhone(img, poz, `+4866600${String(poz).padStart(4, '0')}`);
+  repaint();
+}
+
+/**
+ * Fill a hole inside the fixed 16-slot administratorzy region. The vendor's add button cannot reach
+ * it — it appends at the array end, past slot 16 — so this is the web client's own affordance, and
+ * it is needed because an empty administratorzy slot has no row to type into.
+ */
+function addAdmin(): void {
+  const img = state.image;
+  if (img === null) {
+    fail('No image loaded.');
+    return;
+  }
+  const poz = nextFreeSlot(img, 1, ADMIN_SLOTS);
+  if (poz === 0) {
+    fail('All 16 administratorzy slots are used.');
+    return;
+  }
+  if (poz > readTotal(img)) {
+    writeTotal(img, poz);
+  }
+  writeAbonentPhone(img, poz, `+4866600${String(poz).padStart(4, '0')}`);
+  repaint();
+}
+
 async function toggleLive(): Promise<void> {
   const s = session;
   if (s === null) {
@@ -747,6 +895,8 @@ actionButton('Monitoring', () => {
 });
 actionButton('Rozlacz', disconnect);
 actionButton('Save .bme', saveFile);
+actionButton('Dodaj nwego abonenta', addAbonent);
+actionButton('Dodaj administratory', addAdmin);
 todoButton('Zdarzenia (other path)');
 todoButton('Internet');
 
