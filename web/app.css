@@ -139,6 +139,8 @@ main {
   align-items: start;
   gap: 10px;
   grid-column: 1 / -1;
+  /* the grids below ask how wide this panel actually is, not how wide the window is */
+  container-type: inline-size;
 }
 
 .panel[hidden] {
@@ -192,6 +194,28 @@ main {
 
 .rule[data-v] { background: var(--warn); }
 .rule[data-v="0"] { background: var(--line); }
+
+/* the two grids sit next to each other when there is room, admins first */
+.grids {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.grid {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: 8px;
+}
+
+/* measured against the panel's own width, so the grids pair up exactly when they fit */
+@container (min-width: 700px) {
+  .grids {
+    grid-template-columns: 1fr 1fr;
+  }
+}
 
 /* ---------- the abonenci table, mirroring the vendor layout ---------- */
 .table {

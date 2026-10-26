@@ -36,9 +36,7 @@ import {
   readTotal,
   countGroups,
   countAbonents,
-  writeAbonentPhone,
   clearAbonent,
-  nextFreeSlot,
   lastOccupied,
   writeTotal,
   countGaps,
@@ -212,22 +210,25 @@ function originFlag(at: number, bit: number): boolean {
 let cellObserver: MutationObserver | null = null;
 
 /**
- * Which slots each grid shows, mirroring the vendor's own loader (`FUN_004C7E94`): it walks slots
- * `1..total` and hands each one to exactly one of the two list views. The `administratorzy` view
- * takes slot `k` only when `k ≤ 16` **and its phone is not empty**, so an empty administrator slot
- * has no row at all; the `uŁytkownicy` view takes every slot from 17 up, empty ones included. The
- * row's index field is the global slot number, which is what the `Poz.` column prints.
+ * Which slots each grid shows. The vendor's loader (`FUN_004C7E94`) walks slots `1..total` and
+ * hands each one to exactly one of the two list views: the `administratorzy` view takes slot `k`
+ * only when `k ≤ 16` **and its phone is not empty**, the `uŁytkownicy` view takes every slot from
+ * 17 up, empty ones included. The row's index field is the global slot number, which is what the
+ * `Poz.` column prints.
+ *
+ * This client shows the 16 administratorzy slots **including the empty ones**, which is the one
+ * place it deliberately differs from the vendor: an empty administratorzy slot has nowhere to
+ * type into otherwise, and the region is a fixed 16 slots, so its holes are real slots rather
+ * than missing rows.
  */
 function phoneAt(image: Uint8Array, poz: number): string {
   return decodeCp1250(image, PHONE_BASE + (poz - 1) * PHONE_SLOT, PHONE_MAX);
 }
 
-function adminSlots(image: Uint8Array): number[] {
+function adminSlots(): number[] {
   const out: number[] = [];
   for (let k = 1; k <= ADMIN_SLOTS; k++) {
-    if (phoneAt(image, k) !== '') {
-      out.push(k);
-    }
+    out.push(k);
   }
   return out;
 }
@@ -276,6 +277,20 @@ function resetCell(cell: HTMLElement, at: number, limit: number, phone: boolean,
   renderFooter();
 }
 
+/**
+ * Where the reader had scrolled in each grid of the panel about to be replaced. Re-rendering
+ * rebuilds the scroll containers, which would otherwise jump every table back to the top on an
+ * add, a remove or a cleanup.
+ */
+let gridScroll: number[] = [];
+
+function restoreScroll(wrap: HTMLElement, index: number): void {
+  const span = wrap.scrollHeight - wrap.clientHeight;
+  if (index < gridScroll.length && span > 0) {
+    wrap.scrollTop = Math.round(gridScroll[index] * span);
+  }
+}
+
 function renderAbonents(panel: HTMLElement): void {
   const image = state.image;
   if (image === null) {
@@ -292,23 +307,24 @@ function renderAbonents(panel: HTMLElement): void {
   }
   cellObserver = null;
 
-  const groups: { title: string; slots: number[]; addLabel: string; handler: () => void }[] = [
+  const grids = add(panel, el('div', 'grids', ''));
+  const groups: { title: string; slots: number[]; addLabel: string }[] = [
+    {
+      title: 'Abonenci - administratorzy - reakcja na CLIP :',
+      slots: adminSlots(),
+      addLabel: '',
+    },
     {
       title: 'Abonenci - uŁytkownicy reakcja na CLIP:',
       slots: userSlots(image),
       addLabel: 'Dodaj nwego abonenta',
-      handler: addAbonent,
-    },
-    {
-      title: 'Abonenci - administratorzy - reakcja na CLIP :',
-      slots: adminSlots(image),
-      addLabel: 'Dodaj administratory',
-      handler: addAdmin,
     },
   ];
   const bodies: HTMLElement[] = [];
+  let column = 0;
   for (const g of groups) {
-    const wrap = add(panel, el('div', 'table', ''));
+    const col = add(grids, el('div', 'grid', ''));
+    const wrap = add(col, el('div', 'table', ''));
     const table = add(wrap, el('table', '', ''));
     add(table, el('caption', '', g.title));
     const head = add(table, el('thead', '', ''));
@@ -399,9 +415,13 @@ function renderAbonents(panel: HTMLElement): void {
         repaint();
       });
     }
-    const bar = add(panel, el('div', 'addbar', ''));
-    const addButton = add(bar, el('button', 'act add', g.addLabel));
-    addButton.addEventListener('click', g.handler);
+    restoreScroll(wrap, column);
+    column += 1;
+    if (g.addLabel !== '') {
+      const bar = add(col, el('div', 'addbar', ''));
+      const addButton = add(bar, el('button', 'act add', g.addLabel));
+      addButton.addEventListener('click', addAbonent);
+    }
   }
 
   const obs = new MutationObserver((ms) => {
@@ -455,10 +475,10 @@ function renderAbonents(panel: HTMLElement): void {
   note(
     panel,
     'Add / remove: the ✕ cell at the end of a row removes that entry — its Nazwa and both Wyjście ' +
-      'switches go with it, and clearing the last occupied slot lowers the bound. Each grid has its ' +
-      'own add button under its last row: „Dodaj nwego abonenta" appends after the bound, „Dodaj ' +
-      'administratory" fills the first hole in the fixed 16-slot administratorzy region, which has ' +
-      'no empty rows to type into. „Cleanup gaps" closes the blank rows the users grid shows.',
+      'switches go with it, and clearing the last occupied slot lowers the bound. Typing a phone ' +
+      'into an empty row adds an entry, in either grid. „Dodaj nwego abonenta" under the users grid ' +
+      'only moves the bound, so the new row is blank and you type into it. „Cleanup gaps" closes the ' +
+      'blank rows the users grid shows.',
   );
   const total = readTotal(image);
   const gaps = countGaps(image);
@@ -468,8 +488,8 @@ function renderAbonents(panel: HTMLElement): void {
       `„administratorzy" slots and 0017…${String(total).padStart(4, '0')} „uŁytkownicy" — the head keeps ` +
       `that bound ${total} at 0x000F. The users region has ${gaps} empty slot${gaps === 1 ? '' : 's'} inside ` +
       'the bound, shown as blank rows; „Cleanup gaps" moves the entries down so there are none and ' +
-      'lowers the bound. The administratorzy region keeps its holes, since it is a fixed 16 slots and ' +
-      'its grid never draws an empty one.',
+      'lowers the bound. The vendor\'s own grid skips empty administratorzy slots; this client draws ' +
+      'all 16 so there is somewhere to type an administrator into.',
   );
 }
 
@@ -838,8 +858,9 @@ function cleanup(): void {
 
 /**
  * Add an entry, the way the vendor's own „Dodaj nwego abonenta" button does (`FUN_004D03A8`): it
- * appends at the end of the abonent array, so the new row always lands in the uŁytkownicy region,
- * and when the user has not typed a phone it writes the placeholder `+4866600NNNN`.
+ * appends at the end of the abonent array, so the new row always lands in the uŁytkownicy region.
+ * The vendor fills in a placeholder phone (`+4866600NNNN`) when the user has not typed one; this
+ * client only moves the bound, so the new row is **blank** and you type the phone into it.
  */
 function addAbonent(): void {
   const img = state.image;
@@ -852,32 +873,7 @@ function addAbonent(): void {
     fail('The phone book is full — all 1000 slots are used.');
     return;
   }
-  const poz = total + 1;
-  writeTotal(img, poz);
-  writeAbonentPhone(img, poz, `+4866600${String(poz).padStart(4, '0')}`);
-  repaint();
-}
-
-/**
- * Fill a hole inside the fixed 16-slot administratorzy region. The vendor's add button cannot reach
- * it — it appends at the array end, past slot 16 — so this is the web client's own affordance, and
- * it is needed because an empty administratorzy slot has no row to type into.
- */
-function addAdmin(): void {
-  const img = state.image;
-  if (img === null) {
-    fail('No image loaded.');
-    return;
-  }
-  const poz = nextFreeSlot(img, 1, ADMIN_SLOTS);
-  if (poz === 0) {
-    fail('All 16 administratorzy slots are used.');
-    return;
-  }
-  if (poz > readTotal(img)) {
-    writeTotal(img, poz);
-  }
-  writeAbonentPhone(img, poz, `+4866600${String(poz).padStart(4, '0')}`);
+  writeTotal(img, total + 1);
   repaint();
 }
 
@@ -954,6 +950,13 @@ function showPanel(id: string): void {
     const active = p.getAttribute('data-panel') === id;
     p.hidden = !active;
     if (active) {
+      gridScroll = [];
+      const painted = p.querySelectorAll('.table');
+      for (let k = 0; k < painted.length; k++) {
+        const w = painted[k] as HTMLElement;
+        const span = w.scrollHeight - w.clientHeight;
+        gridScroll.push(span > 0 ? w.scrollTop / span : 0);
+      }
       p.replaceChildren();
       const render = PANELS[id];
       if (render !== undefined) {
