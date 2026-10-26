@@ -33,6 +33,6 @@ export {
 
 export { assertImageSize, decodeBme, encodeBme } from './bme.ts';
 export { Session, PageRejected, SERVICE_PASSWORD } from './session.ts';
-export { Transport } from './transport.ts';
+export type { Transport } from './transport.ts';
 export { WebHidTransport, connectWebHid, describeDevices, PINNED_FILTERS } from './webhid.ts';
 export { webHidAvailable } from './capability.ts';
