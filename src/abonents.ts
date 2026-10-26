@@ -255,8 +255,8 @@ export interface AdminField {
 /** The admin fields in the order the vendor's tab shows them. */
 export const ADMIN_FIELDS: AdminField[] = [
   {label: 'PIN (gate)', at: PIN_AT, limit: PIN_LEN},
-  {label: 'Hasło computer PC', at: PC_AT, limit: PC_LEN},
-  {label: 'Hasło SMS', at: SMS_AT, limit: SMS_LEN},
+  {label: 'Hasło komputer PC:', at: PC_AT, limit: PC_LEN},
+  {label: 'Hasło SMS:', at: SMS_AT, limit: SMS_LEN},
 ];
 
 /**

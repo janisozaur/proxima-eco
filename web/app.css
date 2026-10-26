@@ -349,6 +349,44 @@ td.del:hover {
   align-items: center;
 }
 
+/* the vendor's TComboBox CB_Administrator, drawn as the list of its items */
+.pickbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+button.pick {
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--ink-dim);
+  border-radius: 8px;
+  padding: 3px 9px;
+  font: 500 12px / 1.25 ui-sans-serif, "Segoe UI", system-ui, sans-serif;
+  cursor: pointer;
+}
+
+button.pick:hover {
+  color: var(--accent);
+}
+
+dd.pick {
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+dd.pick.dirty {
+  color: var(--accent);
+}
+
+/* the vendor's centred TLabel LB_OpisAutotestu, kept verbatim */
+.quote {
+  color: var(--ink-dim);
+  text-align: center;
+  font: 400 12.5px / 1.45 ui-sans-serif, "Segoe UI", system-ui, sans-serif;
+}
+
 button.act.add {
   border-style: dashed;
   background: transparent;

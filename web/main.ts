@@ -33,6 +33,9 @@ import {
   WYJ2_BIT,
   ADMIN_SLOTS,
   ADMIN_FIELDS,
+  PIN_AT,
+  PIN_LEN,
+  readAbonents,
   OUT_TENTHS_MAX,
   outTenths,
   outBistabilny,
@@ -681,43 +684,55 @@ function renderAbonents(panel: HTMLElement): void {
 }
 
 /**
- * Tab 2, editable in place. The three values are the config head's own fields, so typing in one
- * writes it straight into the image exactly where the packer puts it — the PIN at `0x0001`, the
- * PC password at `0x0011` and the SMS password at `0x0016` — with the vendor's own capacities.
- * The byte after each field belongs to its neighbour (`image[0]` above the PIN, the flag array at
- * `0x001F` after the SMS password), so an edit never reaches it.
+ * Tab 2, `TS_Administracja` (caption `2 Info admin.`). The vendor's form is one group box
+ * `GB_DodawanieZdarzenAdministratorow` captioned `Informacje przekazywane administratorom:`, holding
+ * the label `Administratorzy:` next to the `TComboBox CB_Administrator` — a `csDropDownList` whose
+ * hint is `Wybór administratora do dodania zdarzeń.` and which the client fills at runtime with the
+ * administrators — the button `BT_DodajZdarzenieAdmin` (`Dodaj zdarzenie`, action
+ * `ActionDodajZdarzenie`), and the `TListView LV_ZdarzeniaAdmin` in `vsReport` style with the columns
+ * `Lp.` / `Zdarzenie` / `Reakcja` / `Właściwości`.
+ *
+ * The combobox contents are decoded: they are the 16 administratorzy slots that hold a phone, drawn
+ * as `phone name` like the vendor's own screenshot. The button is a device action, not an image
+ * field, so it is drawn in the client's "not implemented" style. The grid is the same 300-row table
+ * as tab 3, so it is rendered by the shared `renderEventGrid`.
  */
 function renderAdmin(panel: HTMLElement): void {
   const image = state.image;
   if (image === null) {
-    note(panel, 'No image — the admin PINs live in the config head at 0x0000.');
+    note(panel, 'No image — the administratorzy region and the event rows are both in the image.');
     return;
   }
+
   const c = add(panel, el('div', 'card', ''));
   add(c, el('h2', '', 'Info admin.'));
   const dl = add(c, el('dl', 'dl', ''));
-  for (const f of ADMIN_FIELDS) {
-    add(dl, el('dt', '', f.label));
-    const dd = add(dl, el('dd', 'edit', decodeCp1250(image, f.at, f.limit)));
-    const at = f.at;
-    const limit = f.limit;
-    dd.setAttribute('contenteditable', 'true');
-    dd.spellcheck = false;
-    CELL_SLOTS.set(dd, {at, limit, phone: false, poz: 0});
-    dd.addEventListener('dblclick', () => resetCell(dd, at, limit, false, 0));
-    markCell(dd, decodeCp1250(image, at, limit) !== originText(at, limit));
+  add(dl, el('dt', '', 'Administratorzy:'));
+  const admins = readAbonents(image).filter((a) => a.admin);
+  const pick = add(dl, el('dd', 'pick', admins.length === 0 ? '' : `${admins[0].phone} ${admins[0].name}`.trim()));
+  pick.setAttribute('title', 'Wybór administratora do dodania zdarze');
+  const bar = add(c, el('div', 'pickbar', ''));
+  for (const a of admins) {
+    const label = `${a.phone} ${a.name}`.trim();
+    const b = add(bar, el('button', 'pick', label));
+    b.addEventListener('click', () => {
+      pick.textContent = label;
+      markCell(pick, false);
+    });
   }
-  watchCells([dl], cellMutations);
-  if (state.status !== null) {
-    add(panel, card('From the 0x81 status block', [['adminPin', state.status.adminPin]]));
-  }
+  const btn = add(c, el('button', 'act', 'Dodaj zdarzenie'));
+  btn.setAttribute('data-todo', '');
+
   note(
     panel,
-    'Type in a value to change it: the PIN is 4 bytes at 0x0001, the PC password 5 at 0x0011 and ' +
-      'the SMS password 9 at 0x0016, so longer text is cut to fit. Double-click a marked value to ' +
-      'put the loaded one back, and „Zapis to device" or „Save .bme" carries the change. The adminPin ' +
-      'under the status block is what the gate reports about itself, so it stays read-only.',
+    `The dropdown is the vendor's CB_Administrator, a csDropDownList filled with the ${admins.length} ` +
+      'occupied administratorzy slots as „phone name" like its own screenshot shows; clicking one ' +
+      'selects it. „Dodaj zdarzenie" is the vendor\'s BT_DodajZdarzenieAdmin, whose action sends the ' +
+      'new event to the gate rather than editing the image, so this client draws it as a pending ' +
+      'action. The grid below is the vendor\'s own group caption, its stray opening bracket included ' +
+      '— that is how the vendor wrote it.',
   );
+  renderEventGrid(panel, image, '(Informacje przekazywane administratorom:');
 }
 
 /**
@@ -812,16 +827,27 @@ function renderReakcje(panel: HTMLElement): void {
       'own read-out of the same value.',
   );
 
+  renderEventGrid(panel, image, 'Reakcja wyjść na zdarzenia od wejść i przycisków:');
+}
+
+/**
+ * The one table the vendor shows three times: `LV_ZdarzeniaAdmin` on tab 2, `LV_ReakcjeWejsc` on
+ * tab 3 and `LV_ZdarzeniaWszystkie` on tab 5, which add `Nazwa abonenta` and `Nr telefonu`. They are
+ * views over the same 300 rows, filtered by which events belong to the selected administrator, to
+ * the inputs and buttons, and to everything. The filter is not decoded, so every view here shows
+ * every used row.
+ */
+function renderEventGrid(panel: HTMLElement, image: Uint8Array, caption: string): void {
   const rows = readClipRows(image);
   const wrap = add(panel, el('div', 'table', ''));
   const table = add(wrap, el('table', '', ''));
-  add(table, el('caption', '', 'Reakcja wyjść na zdarzenia od wejść i przycisków:'));
+  add(table, el('caption', '', caption));
   const head = add(table, el('thead', '', ''));
   row(
     head,
     'th',
     [
-      ['th', 'Lp'],
+      ['th', 'Lp.'],
       ['th', 'u16 @+0'],
       ['th', 'u8 @+2'],
       ['th', 'u16 @+3'],
@@ -831,7 +857,7 @@ function renderReakcje(panel: HTMLElement): void {
   const body = add(table, el('tbody', '', ''));
   for (const r of rows) {
     const tr = add(body, el('tr', '', ''));
-    add(tr, el('td', 'num', String(r.poz).padStart(3, '0')));
+    add(tr, el('td', 'num', String(r.poz).padStart(4, '0')));
     add(tr, el('td', 'raw', String(r.a)));
     add(tr, el('td', 'raw', String(r.b)));
     add(tr, el('td', 'raw', String(r.group)));
@@ -845,7 +871,7 @@ function renderReakcje(panel: HTMLElement): void {
   watchCells([body], cellMutations);
   note(
     panel,
-    `The image holds ${rows.length} of ${CLIP_ROWS} reaction rows at 0x8CBF; a row is used when its ` +
+    `The image holds ${rows.length} of ${CLIP_ROWS} event rows at 0x8CBF; a row is used when its ` +
       'u16 at +3 is neither 0 nor 0xFFFF, which is the test the vendor\'s own loader uses before it ' +
       'adds a row to the list. The 59 bytes at +5 are copied into the image verbatim, so that column ' +
       'is editable; the three numeric columns are printed as the raw values because their encoding ' +
@@ -854,13 +880,93 @@ function renderReakcje(panel: HTMLElement): void {
   );
 }
 
+/**
+ * The vendor's own `LB_OpisAutotestu` caption on tab 4, verbatim from the DFM at 0x4FA33E
+ * (a `0x14` long string, 276 bytes) with its `#13` turned into a newline. The misspellings are
+ * the vendor's and are kept as they are.
+ */
+const AUTOTEST_CAPTION =
+  'Reset czasu autotestu,\n' +
+  'powinie odbyć sie, po zamontowaniu sterownika na obiekcie o godznie, ' +
+  'o której mamy zamiar dostawać informacja o autoteście. Jest to ' +
+  'przybliżona godzina odliczana co 24 godziny, ponieważ stwerownik nie ' +
+  'mosiada własnego zeara czasu rzeczywistego.';
+
+/**
+ * Tab 4, `TS_Ustawienia`. The vendor's form is two group boxes side by side:
+ *
+ * * `GB_Hasla`, caption `Hasła:`, holding the labels `Hasło computer PC:` and `Hasło SMS:` above the
+ *   two `TEdit` controls `E_PCHaslo` and `E_SMSHaslo`. Those are the payloads at `0x0011` (5 bytes)
+ *   and `0x0016` (9), so they are editable here.
+ * * `GB_ResetAutotestu`, caption `Ustawianie autotestu`, holding the button `BT_ResetCzasuAutotestu`
+ *   and the centred label `LB_OpisAutotestu`, whose caption is the vendor's own explanation — kept
+ *   here verbatim, its own misspellings included.
+ *
+ * The gate PIN is not one of the vendor's controls: the form has no PIN field, and the client only
+ * reaches it through the image and the `0x81` status block. It stays editable, but in the config-head
+ * card rather than pretending to be part of `Hasła:`.
+ */
 function renderSettings(panel: HTMLElement): void {
-  if (state.image !== null) {
-    const c = add(panel, el('div', 'card', ''));
-    add(c, el('h2', '', 'Config head 0x0000–0x002F'));
-    add(c, el('div', 'mono', hex(state.image, 0x00, 0x30)));
-    add(c, el('p', 'note', 'image[0] = 0x07 is the capacity marker; image[1..4] is the PIN.'));
+  const image = state.image;
+  if (image === null) {
+    note(panel, 'No image — the two hasles and the PIN live in the config head at 0x0000.');
+    return;
   }
+
+  const pair = add(panel, el('div', 'grids', ''));
+  const hasla = add(pair, el('div', 'card', ''));
+  add(hasla, el('h2', '', 'Hasła:'));
+  const dl = add(hasla, el('dl', 'dl', ''));
+  for (const f of ADMIN_FIELDS) {
+    if (f.at === PIN_AT) {
+      continue; // not a control in the vendor's Hasła: group box
+    }
+    add(dl, el('dt', '', f.label));
+    const dd = add(dl, el('dd', 'edit', decodeCp1250(image, f.at, f.limit)));
+    const at = f.at;
+    const limit = f.limit;
+    dd.setAttribute('contenteditable', 'true');
+    dd.spellcheck = false;
+    CELL_SLOTS.set(dd, {at, limit, phone: false, poz: 0});
+    dd.addEventListener('dblclick', () => resetCell(dd, at, limit, false, 0));
+    markCell(dd, decodeCp1250(image, at, limit) !== originText(at, limit));
+  }
+  watchCells([dl], cellMutations);
+  note(
+    hasla,
+    'Type in a value to change it: the PC hasle is 5 bytes at 0x0011 and the SMS one 9 at 0x0016, ' +
+      'which is the capacity of the vendor\'s own TEdit controls, so longer text is cut to fit. ' +
+      'Double-click a marked value to put the loaded one back.',
+  );
+
+  const auto = add(pair, el('div', 'card', ''));
+  add(auto, el('h2', '', 'Ustawianie autotestu'));
+  const btn = add(auto, el('button', 'act', 'Reset czasu autotestu'));
+  btn.setAttribute('data-todo', '');
+  add(auto, el('p', 'quote', AUTOTEST_CAPTION));
+  note(
+    auto,
+    'The button is the vendor\'s BT_ResetCzasuAutotestu: it sends the gate a new autotest anchor ' +
+      'rather than changing a byte in the image, so this client has not implemented it. The text ' +
+      'above is the vendor\'s own label, kept verbatim including its misspellings.',
+  );
+
+  const c = add(panel, el('div', 'card', ''));
+  add(c, el('h2', '', 'Config head 0x0000–0x002F'));
+  add(c, el('div', 'mono', hex(image, 0x00, 0x30)));
+  add(c, el('p', 'note', 'image[0] is the capacity marker; the PIN the gate authenticates against ' +
+    'is image[1..4], which the vendor has no control for — it is editable here because it is still ' +
+    'a field of the image.'));
+  const pinDl = add(c, el('dl', 'dl', ''));
+  add(pinDl, el('dt', '', 'PIN (gate):'));
+  const pin = add(pinDl, el('dd', 'edit', decodeCp1250(image, PIN_AT, PIN_LEN)));
+  pin.setAttribute('contenteditable', 'true');
+  pin.spellcheck = false;
+  CELL_SLOTS.set(pin, {at: PIN_AT, limit: PIN_LEN, phone: false, poz: 0});
+  pin.addEventListener('dblclick', () => resetCell(pin, PIN_AT, PIN_LEN, false, 0));
+  markCell(pin, decodeCp1250(image, PIN_AT, PIN_LEN) !== originText(PIN_AT, PIN_LEN));
+  watchCells([pinDl], cellMutations);
+
   if (state.regions !== null) {
     const wrap = add(panel, el('div', 'table', ''));
     const table = add(wrap, el('table', '', ''));
@@ -875,9 +981,6 @@ function renderSettings(panel: HTMLElement): void {
         ['td', LANDMARKS[i] ?? ''],
       ]);
     }
-  }
-  if (state.image === null && state.regions === null) {
-    note(panel, 'No image and no region table yet.');
   }
 }
 
