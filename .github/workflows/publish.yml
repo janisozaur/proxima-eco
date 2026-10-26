@@ -15,19 +15,19 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          nvmrc: true
+          node-version-file: .nvmrc
       - run: npm ci
       - run: npm run build
       - run: |
-          git config author.name "github-actions[bot]"
-          git config author.email "41828826+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41828826+github-actions[bot]@users.noreply.github.com"
           rm -rf docs
           mkdir -p docs
           cp -r dist/. docs/
           touch docs/.nojekyll
           git add -f docs
           git commit -m "publish build [skip ci]"
-          git push
+          git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" main
