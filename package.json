@@ -16,6 +16,7 @@
     "check": "tsc -p .",
     "test": "node --test",
     "build": "node scripts/build.mts",
+    "publish": "node scripts/publish.mts",
     "serve": "node scripts/serve.ts dist"
   }
 }
