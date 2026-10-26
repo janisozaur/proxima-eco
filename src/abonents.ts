@@ -362,6 +362,97 @@ export function readClipRows(image: Uint8Array): ClipRow[] {
 export function clipTextAt(poz: number): number {
   return CLIP_AT + (poz - 1) * CLIP_ROW + CLIP_TEXT_AT;
 }
+
+/**
+ * What the vendor prints for a row. `FUN_004C7584` builds the caption list at load time, one entry
+ * per id, and the row's `a` field is that id:
+ *
+ * ```
+ * 1                 Reset modułu GSM
+ * 2…7               the six input kinds, for input 1
+ * 8…13              the same six kinds, for input 2
+ * 14, 15            Wciśnie przycisku 1 / 2
+ * 16, 17            Zwolnienie przycisku 1 / 2
+ * 18                Obcy SMS - sms nie od uſytkownika i administratora
+ * 19                Autotest 24 godzinny
+ * 20…1019           CLIP abonenta <phone of slot id-19>
+ * 1020              CLIP dowolnego abonenta
+ * 1024, 1025        Powrot sygnału GSM / Zanik sygnału GSM
+ * ```
+ *
+ * The captions are the const pool at `0x4BAD2C`…`0x4BAF2C`, so the ids 2…7 and 8…13 are the same
+ * six captions with `%d` replaced by the input number. `b` picks the „Reakcja" caption and how
+ * „Właśiwośi" prints: 5 is the CLIP reaction with a `Tclip=%d.%d sek.`
+ * property whose value is the row's first text byte in tenths, 6 is the SMS reaction with the
+ * text itself. Any other id has no evidence yet and stays as the raw value.
+ */
+export const EVENT_INPUT_KINDS = [
+  'Podanie masy na wejście %d',
+  'Podanie plusa na wejście %d',
+  'Zanik masy na wejściu %d',
+  'Zanik plusa na wejściu %d',
+  'Zmiana z masy na plusa na wejściu %d',
+  'Zmiana z plusa na masę na wejściu %d',
+];
+
+/** The caption for a row's `a` id, or `''` when the id is not one the client can name. */
+export function eventCaption(image: Uint8Array, id: number): string {
+  if (id === 1) {
+    return 'Reset modułu GSM';
+  }
+  if (id >= 2 && id <= 13) {
+    const kind = EVENT_INPUT_KINDS[(id - 2) % 6];
+    return kind.replace('%d', String(1 + Math.floor((id - 2) / 6)));
+  }
+  if (id === 14 || id === 15) {
+    return `Wciśnięcie przycisku ${id - 13}`;
+  }
+  if (id === 16 || id === 17) {
+    return `Zwolnienie przycisku ${id - 15}`;
+  }
+  if (id === 18) {
+    return 'Obcy SMS - sms nie od użytkownika i administratora';
+  }
+  if (id === 19) {
+    return 'Autotest 24 godzinny';
+  }
+  if (id >= 20 && id <= 1019) {
+    const slot = id - 19;
+    const phone = decodeCp1250(image, PHONE_BASE + (slot - 1) * PHONE_SLOT, PHONE_MAX);
+    return `CLIP abonenta ${phone}`;
+  }
+  if (id === 1020) {
+    return 'CLIP dowolnego abonenta';
+  }
+  if (id === 1024) {
+    return 'Powrot sygnału GSM';
+  }
+  if (id === 1025) {
+    return 'Zanik sygnału GSM';
+  }
+  return '';
+}
+
+/** The „Reakcja" caption for a row's `b`, or `''` when that id is not pinned yet. */
+export function reactionCaption(b: number): string {
+  if (b === 5) {
+    return 'Wyłanie CLIP-u';
+  }
+  if (b === 6) {
+    return 'Wyłanie SMS-a';
+  }
+  return '';
+}
+
+/** The „Właśiwośi" column: a CLIP row prints its Tclip, an SMS row its text. */
+export function eventProperty(image: Uint8Array, row: ClipRow): string {
+  if (row.b === 5) {
+    const tenths = image[row.at + CLIP_TEXT_AT];
+    return `Tclip=${Math.trunc(tenths / 10)}.${tenths % 10} sek.`;
+  }
+  return row.text;
+}
+
 /**
  * Admin PINs read through the field table above: `image[1..4]` is the PIN the gate authenticates
  * against, and the two NUL-terminated ASCII strings at `0x11` and `0x16` are the „Hasło computer

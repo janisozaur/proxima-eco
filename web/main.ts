@@ -44,6 +44,9 @@ import {
   CLIP_TEXT_LEN,
   readClipRows,
   clipTextAt,
+  eventCaption,
+  reactionCaption,
+  eventProperty,
   readTotal,
   countGroups,
   countAbonents,
@@ -56,6 +59,7 @@ import {
 import { decodeCp1250, encodeCp1250 } from '../src/cp1250.ts';
 import type { Transport } from '../src/transport.ts';
 import type { Frame, Status } from '../src/protocol.ts';
+import type { ClipRow } from '../src/abonents.ts';
 
 // ---------------------------------------------------------------- state
 
@@ -683,6 +687,13 @@ function renderAbonents(panel: HTMLElement): void {
   );
 }
 
+/** One entry of the vendor's CB_Administrator: the abonent and its 1-based loaded position. */
+interface AdminPick {
+  ord: number; // 1-based position among the occupied slots, which is what a row's group holds
+  phone: string;
+  name: string;
+}
+
 /**
  * Tab 2, `TS_Administracja` (caption `2 Info admin.`). The vendor's form is one group box
  * `GB_DodawanieZdarzenAdministratorow` captioned `Informacje przekazywane administratorom:`, holding
@@ -708,31 +719,53 @@ function renderAdmin(panel: HTMLElement): void {
   add(c, el('h2', '', 'Info admin.'));
   const dl = add(c, el('dl', 'dl', ''));
   add(dl, el('dt', '', 'Administratorzy:'));
-  const admins = readAbonents(image).filter((a) => a.admin);
+  const abonents = readAbonents(image);
+  const admins: AdminPick[] = [];
+  for (let i = 0; i < abonents.length; i++) {
+    if (abonents[i].admin) {
+      admins.push({ord: i + 1, phone: abonents[i].phone, name: abonents[i].name});
+    }
+  }
   const pick = add(dl, el('dd', 'pick', admins.length === 0 ? '' : `${admins[0].phone} ${admins[0].name}`.trim()));
   pick.setAttribute('title', 'Wybór administratora do dodania zdarze');
   const bar = add(c, el('div', 'pickbar', ''));
-  for (const a of admins) {
-    const label = `${a.phone} ${a.name}`.trim();
+  const rows = readClipRows(image);
+  let body: HTMLElement | null = null;
+  const paint = (ord: number): void => {
+    if (body === null) {
+      body = renderEventGrid(panel, image, '(Informacje przekazywane administratorom:', rows.filter((r) => r.group === ord));
+      return;
+    }
+    paintEventRows(body, image, rows.filter((r) => r.group === ord));
+  };
+  for (const admin of admins) {
+    const label = `${admin.phone} ${admin.name}`.trim();
     const b = add(bar, el('button', 'pick', label));
     b.addEventListener('click', () => {
       pick.textContent = label;
       markCell(pick, false);
+      paint(admin.ord);
     });
   }
   const btn = add(c, el('button', 'act', 'Dodaj zdarzenie'));
   btn.setAttribute('data-todo', '');
+  if (admins.length > 0) {
+    paint(admins[0].ord);
+  } else {
+    body = renderEventGrid(panel, image, '(Informacje przekazywane administratorom:', []);
+  }
 
   note(
     panel,
     `The dropdown is the vendor's CB_Administrator, a csDropDownList filled with the ${admins.length} ` +
       'occupied administratorzy slots as „phone name" like its own screenshot shows; clicking one ' +
-      'selects it. „Dodaj zdarzenie" is the vendor\'s BT_DodajZdarzenieAdmin, whose action sends the ' +
-      'new event to the gate rather than editing the image, so this client draws it as a pending ' +
-      'action. The grid below is the vendor\'s own group caption, its stray opening bracket included ' +
-      '— that is how the vendor wrote it.',
+      'selects it and repaints the grid below with only that administrator\'s events. The row\'s u16 ' +
+      'at +3 is who owns it: it is the 1-based position of the abonent among the occupied slots, so ' +
+      'in the sample LANDA is 1 and michal is 4 — the fourth occupied slot, not slot 5. Some ' +
+      'administrators own no row at all and their grid is empty, exactly as the vendor shows it. ' +
+      '„Dodaj zdarzenie" is the vendor\'s BT_DodajZdarzenieAdmin, whose action sends the new event to ' +
+      'the gate rather than editing the image, so this client draws it as a pending action.',
   );
-  renderEventGrid(panel, image, '(Informacje przekazywane administratorom:');
 }
 
 /**
@@ -827,7 +860,7 @@ function renderReakcje(panel: HTMLElement): void {
       'own read-out of the same value.',
   );
 
-  renderEventGrid(panel, image, 'Reakcja wyjść na zdarzenia od wejść i przycisków:');
+  renderEventGrid(panel, image, 'Reakcja wyjść na zdarzenia od wejść i przycisków:', readClipRows(image));
 }
 
 /**
@@ -837,8 +870,7 @@ function renderReakcje(panel: HTMLElement): void {
  * the inputs and buttons, and to everything. The filter is not decoded, so every view here shows
  * every used row.
  */
-function renderEventGrid(panel: HTMLElement, image: Uint8Array, caption: string): void {
-  const rows = readClipRows(image);
+function renderEventGrid(panel: HTMLElement, image: Uint8Array, caption: string, rows: ClipRow[]): HTMLElement {
   const wrap = add(panel, el('div', 'table', ''));
   const table = add(wrap, el('table', '', ''));
   add(table, el('caption', '', caption));
@@ -846,38 +878,43 @@ function renderEventGrid(panel: HTMLElement, image: Uint8Array, caption: string)
   row(
     head,
     'th',
-    [
-      ['th', 'Lp.'],
-      ['th', 'u16 @+0'],
-      ['th', 'u8 @+2'],
-      ['th', 'u16 @+3'],
-      ['th', 'Właściwości'],
-    ],
+    [['th', 'Lp.'], ['th', 'Zdarzenie'], ['th', 'Reakcja'], ['th', 'Właściwości']],
   );
   const body = add(table, el('tbody', '', ''));
-  for (const r of rows) {
-    const tr = add(body, el('tr', '', ''));
-    add(tr, el('td', 'num', String(r.poz).padStart(4, '0')));
-    add(tr, el('td', 'raw', String(r.a)));
-    add(tr, el('td', 'raw', String(r.b)));
-    add(tr, el('td', 'raw', String(r.group)));
-    const at = clipTextAt(r.poz);
-    const text = add(tr, el('td', 'edit', r.text));
-    text.setAttribute('contenteditable', 'true');
-    text.spellcheck = false;
-    CELL_SLOTS.set(text, {at, limit: CLIP_TEXT_LEN, phone: false, poz: 0});
-    text.addEventListener('dblclick', () => resetCell(text, at, CLIP_TEXT_LEN, false, 0));
-  }
+  paintEventRows(body, image, rows);
   watchCells([body], cellMutations);
-  note(
-    panel,
-    `The image holds ${rows.length} of ${CLIP_ROWS} event rows at 0x8CBF; a row is used when its ` +
-      'u16 at +3 is neither 0 nor 0xFFFF, which is the test the vendor\'s own loader uses before it ' +
-      'adds a row to the list. The 59 bytes at +5 are copied into the image verbatim, so that column ' +
-      'is editable; the three numeric columns are printed as the raw values because their encoding ' +
-      'is not decoded yet — the vendor draws them as „Zdarzenie" and „Reakcja", and inventing those ' +
-      'labels here would be a guess.',
-  );
+  return body;
+}
+
+/**
+ * The vendor's four columns. `Lp.` counts the rows of the view, not of the image — the vendor's own
+ * screenshot numbers an administrator's three rows 0001…0003 even though they are image rows 3…5.
+ * A row whose id the client cannot name keeps its raw number, and so does a reaction id other than
+ * the two pinned ones. Only an SMS row (reaction 6) has its text as a plain 59-byte field, so only
+ * that one is editable; a CLIP row's property is one byte of tenths and typing into it would put
+ * prose where a number belongs.
+ */
+function paintEventRows(body: HTMLElement, image: Uint8Array, rows: ClipRow[]): void {
+  body.replaceChildren();
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const tr = add(body, el('tr', '', ''));
+    add(tr, el('td', 'num', String(i + 1).padStart(4, '0')));
+    const what = eventCaption(image, r.a);
+    add(tr, el('td', what === '' ? 'raw' : '', what === '' ? String(r.a) : what));
+    const how = reactionCaption(r.b);
+    add(tr, el('td', how === '' ? 'raw' : '', how === '' ? String(r.b) : how));
+    if (r.b === 6) {
+      const at = clipTextAt(r.poz);
+      const text = add(tr, el('td', 'edit', r.text));
+      text.setAttribute('contenteditable', 'true');
+      text.spellcheck = false;
+      CELL_SLOTS.set(text, {at, limit: CLIP_TEXT_LEN, phone: false, poz: 0});
+      text.addEventListener('dblclick', () => resetCell(text, at, CLIP_TEXT_LEN, false, 0));
+    } else {
+      add(tr, el('td', 'raw', eventProperty(image, r)));
+    }
+  }
 }
 
 /**

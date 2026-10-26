@@ -64,7 +64,11 @@ import {
   CLIP_TEXT_LEN,
   readClipRows,
   clipTextAt,
-} from '../src/abonents.ts';
+  eventCaption,
+  reactionCaption,
+  eventProperty,
+  EVENT_INPUT_KINDS,
+ } from '../src/abonents.ts';
 import { IMAGE_LEN } from '../src/protocol.ts';
 
 // ---- the arithmetic the layout claims is exact ----
@@ -341,4 +345,46 @@ function put(bytes: Uint8Array, at: number, text: string): void {
   image[at + 4] = 0;
   eq(readClipRows(image).length, 0);
   eq(CLIP_TEXT_LEN, 59);
+}
+
+// ---- the id -> caption table FUN_004C7584 builds at load time ----
+{
+  const image = new Uint8Array(IMAGE_LEN);
+  image[TOTAL_COUNT_AT] = 40;
+  // slot 31 holds a phone, which is what a CLIP-abonent id names: id = slot + 19
+  const phone = '+48000000001';
+  for (let i = 0; i < phone.length; i++) {
+    image[PHONE_BASE + 30 * PHONE_SLOT + i] = phone.charCodeAt(i);
+  }
+  eq(eventCaption(image, 1), 'Reset modu\u0142u GSM');
+  eq(eventCaption(image, 2), EVENT_INPUT_KINDS[0].replace('%d', '1'));
+  eq(eventCaption(image, 8), EVENT_INPUT_KINDS[0].replace('%d', '2'));
+  eq(eventCaption(image, 13), EVENT_INPUT_KINDS[5].replace('%d', '2'));
+  eq(eventCaption(image, 14), 'Wci\u015bni\u0119cie przycisku 1');
+  eq(eventCaption(image, 17), 'Zwolnienie przycisku 2');
+  eq(eventCaption(image, 19), 'Autotest 24 godzinny');
+  eq(eventCaption(image, 50), `CLIP abonenta ${phone}`);
+  eq(eventCaption(image, 1020), 'CLIP dowolnego abonenta');
+  eq(eventCaption(image, 1024), 'Powrot sygna\u0142u GSM');
+  // an id the client cannot name stays blank, so the caller prints the raw number
+  eq(eventCaption(image, 0), '');
+  eq(eventCaption(image, 1021), '');
+
+  eq(reactionCaption(5), 'Wy\u0142anie CLIP-u');
+  eq(reactionCaption(6), 'Wy\u0142anie SMS-a');
+  eq(reactionCaption(1), '');
+
+  // a CLIP row prints its Tclip from the first text byte in tenths, an SMS row its text
+  const at = CLIP_AT + CLIP_TEXT_AT - CLIP_TEXT_AT;
+  image[at] = 0x13;
+  image[at + 2] = 5;
+  image[at + 3] = 1;
+  image[at + CLIP_TEXT_AT] = 100; // 10.0 s
+  const clip = readClipRows(image)[0];
+  eq(eventProperty(image, clip), 'Tclip=10.0 sek.');
+  image[at + 2] = 6;
+  image[at + CLIP_TEXT_AT] = 0x54; // 'T'
+  image[at + CLIP_TEXT_AT + 1] = 0x45; // 'E'
+  const sms = readClipRows(image)[0];
+  eq(eventProperty(image, sms), 'TE');
 }
