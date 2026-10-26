@@ -43,3 +43,31 @@ export function decodeCp1250(bytes: Uint8Array, at: number, limit: number): stri
   }
   return out;
 }
+
+/** Reverse of `decodeByte`: the code point a byte stands for, or undefined for a gap. */
+const HIGH_CODE: number[] = [...HIGH].map((ch) => ch.charCodeAt(0));
+
+export function encodeByte(ch: string): number {
+  const code = ch.charCodeAt(0);
+  if (code < 0x80) {
+    return code;
+  }
+  const i = HIGH_CODE.indexOf(code);
+  return i < 0 ? 0x3f : i + 0x80; // '?' for a letter CP-1250 cannot represent
+}
+
+/**
+ * Write `text` as CP-1250 into `bytes` at `at`, zero-filling the rest of `limit` — the slot
+ * convention the vendor writes (payload only, no length byte). Returns the number of bytes used.
+ * Longer text is truncated to `limit`, which is the slot capacity.
+ */
+export function encodeCp1250(bytes: Uint8Array, at: number, limit: number, text: string): number {
+  let n = 0;
+  for (; n < limit && n < text.length; n++) {
+    bytes[at + n] = encodeByte(text[n]);
+  }
+  for (let i = n; i < limit; i++) {
+    bytes[at + i] = 0;
+  }
+  return n;
+}

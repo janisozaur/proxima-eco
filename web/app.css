@@ -32,6 +32,12 @@
   box-sizing: border-box;
 }
 
+/* the native thin scrollbar, not a painted one: Chrome/Edge draw it themselves */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-faint) transparent;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -194,8 +200,11 @@ main {
   border-radius: 14px;
   padding: 4px 10px 10px;
   overflow-x: auto;
-  max-height: 60vh;
+  max-height: 84vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-faint) transparent;
 }
 
 table {
@@ -233,6 +242,19 @@ td.num {
 td.phone {
   font-variant-numeric: tabular-nums;
   width: 140px;
+}
+
+/* the cells you can type into: no box, just a caret and a hover wash */
+td.phone,
+td.edit {
+  caret-color: var(--accent);
+  cursor: text;
+  white-space: pre;
+}
+
+td.phone:hover,
+td.edit:hover {
+  background: var(--panel-2);
 }
 
 td.flag {

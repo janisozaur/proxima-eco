@@ -9,7 +9,7 @@
  * first phone (`0x400–0x406`) are the flags of abonents 994–1000.
  */
 
-import { decodeCp1250 } from './cp1250.ts';
+import { decodeCp1250, encodeCp1250 } from './cp1250.ts';
 
 export const FLAG_BASE = 0x001f; // one byte per subscriber
 export const ABONENT_SLOTS = 1000;
@@ -24,16 +24,40 @@ export const NAME_MAX = 15;
 export const WYJ1_BIT = 0x01;
 export const WYJ2_BIT = 0x02;
 
+/**
+ * The config head carries the two counts the vendor splits its lists on: a 16-bit little-endian
+ * **total entry count** at `0x0F` (the packer writes `length(abonents)` there) and a group count
+ * at `0x0E` (a byte, 0..255, kept in step with one of the vendor's two list views). The CSV export
+ * writes a `;"Administratorzy";;;` separator row, so the table is one array read as two groups:
+ * the first `users` entries are users, the rest are administrators.
+ */
+export const GROUP_COUNT_AT = 0x000e; // users
+export const TOTAL_COUNT_AT = 0x000f; // 16-bit little-endian
+
+export interface Split {
+  users: number;
+  total: number;
+}
+
+export function readSplit(image: Uint8Array): Split {
+  return {
+    users: image[GROUP_COUNT_AT],
+    total: image[GROUP_COUNT_AT + 1] | (image[GROUP_COUNT_AT + 2] << 8),
+  };
+}
+
 export interface Abonent {
   poz: number; // 1-based, as the vendor UI numbers them
   phone: string;
   name: string;
   wyj1: boolean;
   wyj2: boolean;
+  admin: boolean; // at or after the split point
 }
 
 /** Occupied slots only — an empty slot has no phone string. */
 export function readAbonents(image: Uint8Array): Abonent[] {
+  const split = readSplit(image);
   const out: Abonent[] = [];
   for (let k = 0; k < ABONENT_SLOTS; k++) {
     const phone = decodeCp1250(image, PHONE_BASE + k * PHONE_SLOT, PHONE_MAX);
@@ -47,9 +71,27 @@ export function readAbonents(image: Uint8Array): Abonent[] {
       name: decodeCp1250(image, NAME_BASE + k * NAME_SLOT, NAME_MAX),
       wyj1: (flag & WYJ1_BIT) !== 0,
       wyj2: (flag & WYJ2_BIT) !== 0,
+      admin: k >= split.users,
     });
   }
   return out;
+}
+
+/**
+ * Write one subscriber back in place. The image is the storage, so editing is just rewriting the
+ * two string slots and the flag byte; nothing is sent anywhere until a write is asked for.
+ */
+export function writeAbonentPhone(image: Uint8Array, poz: number, phone: string): void {
+  encodeCp1250(image, PHONE_BASE + (poz - 1) * PHONE_SLOT, PHONE_MAX, phone);
+}
+
+export function writeAbonentName(image: Uint8Array, poz: number, name: string): void {
+  encodeCp1250(image, NAME_BASE + (poz - 1) * NAME_SLOT, NAME_MAX, name);
+}
+
+export function setAbonentOutput(image: Uint8Array, poz: number, bit: number, on: boolean): void {
+  const at = FLAG_BASE + (poz - 1);
+  image[at] = on ? image[at] | bit : image[at] & ~bit & 0xff;
 }
 
 /** Occupied-slot count, which is what the vendor status bar reports as "abonenci: n/1000". */

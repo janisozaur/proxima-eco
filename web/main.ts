@@ -20,7 +20,24 @@ import { connectWebHid, describeDevices } from '../src/webhid.ts';
 import { webHidAvailable } from '../src/capability.ts';
 import { assertImageSize, decodeBme, encodeBme } from '../src/bme.ts';
 import { IMAGE_LEN, REGION_TABLE_DWORDS } from '../src/protocol.ts';
-import { ABONENT_SLOTS, readAbonents, readAdminInfo, countAbonents } from '../src/abonents.ts';
+import {
+  ABONENT_SLOTS,
+  Abonent,
+  FLAG_BASE,
+  PHONE_BASE,
+  PHONE_SLOT,
+  PHONE_MAX,
+  NAME_BASE,
+  NAME_SLOT,
+  NAME_MAX,
+  WYJ1_BIT,
+  WYJ2_BIT,
+  readAbonents,
+  readAdminInfo,
+  readSplit,
+  countAbonents,
+} from '../src/abonents.ts';
+import { encodeCp1250 } from '../src/cp1250.ts';
 import type { Transport } from '../src/transport.ts';
 import type { Frame, Status } from '../src/protocol.ts';
 
@@ -35,6 +52,7 @@ interface State {
   source: string; // what the current image came from, for the footer strip
   error: string | null;
   live: boolean;
+  dirty: boolean; // the image was changed in place since it was last read or loaded
 }
 
 const state: State = {
@@ -46,6 +64,7 @@ const state: State = {
   source: 'No image loaded.',
   error: null,
   live: false,
+  dirty: false,
 };
 
 /** The session and its transport, set once the device is connected. */
@@ -119,38 +138,135 @@ const LANDMARKS: Record<number, string> = {
 
 // ---------------------------------------------------------------- panels
 
-function renderAbonents(panel: HTMLElement): void {
-  const n = state.image === null ? 0 : countAbonents(state.image);
-  const kpi = el('div', 'card', '');
-  add(kpi, el('h2', '', 'abonenci'));
-  add(kpi, el('div', 'kpi', `${n}/${ABONENT_SLOTS}`));
-  add(panel, kpi);
+/**
+ * Tab 1 is **two grids**, exactly as the vendor's form has them: `LB_TytulUzytkownikow` +
+ * `LV_Uzytkownicy` and `LB_TytulAdministratorow` + `LV_Administratorzy`. Both read the same
+ * thousand-slot arrays; the split is the count the config head keeps at `0x0E`.
+ *
+ * Cells are editable in place: the phone and name cells are `contenteditable` and a mutation
+ * writes them straight back into the image slot, while a click on a checkbox cell toggles the
+ * flag bit — the same gesture the vendor's `TGridClickHandler` performs.
+ */
+const CELL_SLOTS = new Map<HTMLElement, { at: number; limit: number }>();
+function paintFlag(cell: HTMLElement, on: boolean): void {
+  cell.className = on ? 'td.flagOn' : 'td.flagOff';
+  cell.textContent = on ? '✓' : '';
+}
 
-  if (state.image === null) {
+/** One observer for whichever grids are currently painted; re-rendering replaces it. */
+let cellObserver: MutationObserver | null = null;
+
+function renderAbonents(panel: HTMLElement): void {
+  const image = state.image;
+  if (image === null) {
     note(panel, 'No image — read the gate or open a .bme file.');
     return;
   }
 
-  const rows = readAbonents(state.image);
-  const wrap = add(panel, el('div', 'table', ''));
-  const table = add(wrap, el('table', '', ''));
-  add(table, el('caption', '', 'Uzytkownicy reakcja na CLIP:'));
-  const head = add(table, el('thead', '', ''));
-  row(head, 'th', [['th', 'Poz.'], ['th', 'Telefon'], ['th', 'Nazwa'], ['th', 'Wyjście 1'], ['th', 'Wyjście 2']]);
-  const body = add(table, el('tbody', '', ''));
-  for (const a of rows) {
-    row(body, 'td', [
-      ['td.num', String(a.poz)],
-      ['td.phone', a.phone],
-      ['td', a.name],
-      [a.wyj1 ? 'td.flagOn' : 'td.flagOff', a.wyj1 ? '✓' : ''],
-      [a.wyj2 ? 'td.flagOn' : 'td.flagOff', a.wyj2 ? '✓' : ''],
-    ]);
+  // the cells this render owns; stale entries from a previous paint must not be edited into
+  CELL_SLOTS.clear();
+  const previous: MutationObserver | null = cellObserver;
+  if (previous !== null) {
+    previous.disconnect();
   }
+  cellObserver = null;
+
+  const rows = readAbonents(image);
+  const groups: [string, Abonent[]][] = [
+    ['Abonenci - uŁytkownicy reakcja na CLIP:', rows.filter((a) => !a.admin)],
+    ['Abonenci - administratorzy - reakcja na CLIP :', rows.filter((a) => a.admin)],
+  ];
+  const bodies: HTMLElement[] = [];
+  for (const [title, list] of groups) {
+    if (list.length === 0) {
+      continue;
+    }
+    const wrap = add(panel, el('div', 'table', ''));
+    const table = add(wrap, el('table', '', ''));
+    add(table, el('caption', '', title));
+    const head = add(table, el('thead', '', ''));
+    row(head, 'th', [['th', 'Poz.'], ['th', 'Telefon'], ['th', 'Nazwa'], ['th', 'Wyjście 1'], ['th', 'Wyjście 2']]);
+    const body = add(table, el('tbody', '', ''));
+    bodies.push(body);
+
+    for (const a of list) {
+      const tr = add(body, el('tr', '', ''));
+      add(tr, el('td', 'num', String(a.poz)));
+      const phone = add(tr, el('td', 'phone', a.phone));
+      const name = add(tr, el('td', 'edit', a.name));
+      const slots: [HTMLElement, number, number][] = [
+        [phone, PHONE_BASE + (a.poz - 1) * PHONE_SLOT, PHONE_MAX],
+        [name, NAME_BASE + (a.poz - 1) * NAME_SLOT, NAME_MAX],
+      ];
+      for (const [cell, at, limit] of slots) {
+        cell.setAttribute('contenteditable', 'true');
+        cell.setAttribute('spellcheck', 'false');
+        CELL_SLOTS.set(cell, { at, limit });
+      }
+      const flags: [[number, boolean], [number, boolean]] = [[WYJ1_BIT, a.wyj1], [WYJ2_BIT, a.wyj2]];
+      for (const [bit, on] of flags) {
+        const cell = add(tr, el('td', 'flagOff', ''));
+        paintFlag(cell, on);
+        const at = FLAG_BASE + (a.poz - 1);
+        cell.addEventListener('click', () => {
+          const img = state.image;
+          if (img === null) {
+            return;
+          }
+          const now = (img[at] & bit) === 0;
+          img[at] = (now ? img[at] | bit : img[at] & ~bit) & 0xff;
+          paintFlag(cell, now);
+          state.dirty = true;
+          renderFooter();
+        });
+      }
+    }
+  }
+
+  const obs = new MutationObserver((ms) => {
+    if (state.image === null) {
+      return;
+    }
+    let touched = false;
+    for (const m of ms) {
+      const node = m.target;
+      if (node === null) {
+        continue;
+      }
+      const cell = node instanceof HTMLElement ? node : node.parentElement;
+      if (cell === null) {
+        continue;
+      }
+      const slot = CELL_SLOTS.get(cell);
+      if (slot === undefined) {
+        continue;
+      }
+      encodeCp1250(state.image, slot.at, slot.limit, cell.textContent);
+      state.dirty = true;
+      touched = true;
+    }
+    if (touched) {
+      renderFooter();
+    }
+  });
+  const watch = {childList: true, characterData: true, subtree: true};
+  for (const b of bodies) {
+    obs.observe(b, watch);
+  }
+  cellObserver = obs;
+
   note(
     panel,
-    'Wyjście 1 / Wyjście 2 are bit 0 and bit 1 of the flag byte at 0x001F + poz − 1, one of a ' +
-      'contiguous thousand-byte array that ends right where the phone table begins at 0x0407.',
+    'Type in a Telefon / Nazwa cell to change it in place; click a Wyjście cell to toggle that ' +
+      'switch. Both write straight into the loaded image, so „Zapis to device" or „Save .bme" is ' +
+      'what carries the change.',
+  );
+  const s = readSplit(image);
+  note(
+    panel,
+    'The two grids are the split the vendor itself draws: the config head keeps the total entry ' +
+      `0x000F (${s.total}) and the user count at 0x000E (${s.users}); everything from there on is ` +
+      'listed under „administratorzy".',
   );
 }
 
@@ -361,6 +477,8 @@ async function readDevice(): Promise<void> {
     setState('read', 'Reading…');
     state.image = await s.readWindow(setProgress);
     state.source = 'Odczytano z sterownika.';
+    state.dirty = false;
+    repaint();
     setState('read', 'Device read');
   } catch (e) {
     fail(String(e));
@@ -379,6 +497,8 @@ async function writeDevice(): Promise<void> {
   try {
     await s.writeWindow(state.image, setProgress);
     state.source = 'Zapisano to sterownika.';
+    state.dirty = false;
+    repaint();
     setState('write', 'Device written');
   } catch (e) {
     fail(e instanceof PageRejected ? `Page at 0x${e.addr.toString(16)} rejected` : String(e));
@@ -399,6 +519,8 @@ async function loadFile(): Promise<void> {
     state.image = decodeBme(assertImageSize(bytes));
     state.source = `Odczytano z pliku. (${picked.name})`;
     state.error = null;
+    state.dirty = false;
+    repaint();
   } catch (e) {
     fail(String(e));
   }
@@ -476,7 +598,10 @@ function fail(message: string): void {
 }
 
 /** Tab switching: the active panel is the only one laid out. */
+let currentTab = '';
+
 function showPanel(id: string): void {
+  currentTab = id;
   const panels = document.getElementById('panels');
   if (panels === null) {
     return;
@@ -497,17 +622,28 @@ function showPanel(id: string): void {
   renderFooter();
 }
 
+/** Repaint the panel that is showing — state changes must not wait for a tab click. */
+function repaint(): void {
+  showPanel(currentTab);
+}
+
 /** Footer strip, mirroring the vendor's „Odczytano z pliku." + counters. */
 function renderFooter(): void {
   const src = document.getElementById('source');
   if (src !== null) {
-    src.textContent = state.error ?? state.source;
+    src.textContent = state.error ?? (state.dirty ? `${state.source} · edited` : state.source);
     src.setAttribute('class', state.error === null ? 'src' : 'bad');
   }
   const ab = document.getElementById('abonents');
   if (ab !== null) {
-    const n = state.image === null ? '–' : String(countAbonents(state.image));
-    ab.textContent = `abonenci: ${n}/${ABONENT_SLOTS}`;
+    if (state.image === null) {
+      ab.textContent = `abonenci: –/${ABONENT_SLOTS}`;
+    } else {
+      const s = readSplit(state.image);
+      ab.textContent =
+        `abonenci: ${countAbonents(state.image)}/${ABONENT_SLOTS} · ` +
+        `users ${s.users} · administratorzy ${s.total - s.users}`;
+    }
   }
   const ev = document.getElementById('events');
   if (ev !== null) {
