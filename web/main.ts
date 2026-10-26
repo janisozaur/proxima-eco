@@ -41,6 +41,8 @@ import {
   nextFreeSlot,
   lastOccupied,
   writeTotal,
+  countGaps,
+  compactAbonents,
 } from '../src/abonents.ts';
 import { decodeCp1250, encodeCp1250 } from '../src/cp1250.ts';
 import type { Transport } from '../src/transport.ts';
@@ -290,24 +292,42 @@ function renderAbonents(panel: HTMLElement): void {
   }
   cellObserver = null;
 
-  const groups: [string, number[]][] = [
-    ['Abonenci - uŁytkownicy reakcja na CLIP:', userSlots(image)],
-    ['Abonenci - administratorzy - reakcja na CLIP :', adminSlots(image)],
+  const groups: { title: string; slots: number[]; addLabel: string; handler: () => void }[] = [
+    {
+      title: 'Abonenci - uŁytkownicy reakcja na CLIP:',
+      slots: userSlots(image),
+      addLabel: 'Dodaj nwego abonenta',
+      handler: addAbonent,
+    },
+    {
+      title: 'Abonenci - administratorzy - reakcja na CLIP :',
+      slots: adminSlots(image),
+      addLabel: 'Dodaj administratory',
+      handler: addAdmin,
+    },
   ];
   const bodies: HTMLElement[] = [];
-  for (const [title, slots] of groups) {
-    if (slots.length === 0) {
-      continue;
-    }
+  for (const g of groups) {
     const wrap = add(panel, el('div', 'table', ''));
     const table = add(wrap, el('table', '', ''));
-    add(table, el('caption', '', title));
+    add(table, el('caption', '', g.title));
     const head = add(table, el('thead', '', ''));
-    row(head, 'th', [['th', 'Poz.'], ['th', 'Telefon'], ['th', 'Nazwa'], ['th', 'Wyjście 1'], ['th', 'Wyjście 2']]);
+    row(
+      head,
+      'th',
+      [
+        ['th', 'Poz.'],
+        ['th', 'Telefon'],
+        ['th', 'Nazwa'],
+        ['th', 'Wyjście 1'],
+        ['th', 'Wyjście 2'],
+        ['th', 'Del'],
+      ],
+    );
     const body = add(table, el('tbody', '', ''));
     bodies.push(body);
 
-    for (const poz of slots) {
+    for (const poz of g.slots) {
       const tr = add(body, el('tr', '', ''));
       add(tr, el('td', 'num', String(poz).padStart(4, '0')));
       const phone = add(tr, el('td', 'phone', phoneAt(image, poz)));
@@ -368,7 +388,20 @@ function renderAbonents(panel: HTMLElement): void {
           renderFooter();
         });
       }
+      const del = add(tr, el('td', 'del', '✕'));
+      del.addEventListener('click', () => {
+        const img = state.image;
+        if (img === null) {
+          return;
+        }
+        clearAbonent(img, poz);
+        syncBound(img, poz);
+        repaint();
+      });
     }
+    const bar = add(panel, el('div', 'addbar', ''));
+    const addButton = add(bar, el('button', 'act add', g.addLabel));
+    addButton.addEventListener('click', g.handler);
   }
 
   const obs = new MutationObserver((ms) => {
@@ -421,19 +454,22 @@ function renderAbonents(panel: HTMLElement): void {
   );
   note(
     panel,
-    'Add / remove: the uŁytkownicy grid shows every slot up to the entry bound, so typing a phone ' +
-      'into an empty row adds an entry and clearing a Telefon cell removes one — its Nazwa and both ' +
-      'Wyjście switches go with it. „Dodaj nwego abonenta" appends at the end like the vendor does, ' +
-      '„Dodaj administratory" fills the first hole in the fixed 16-slot administratorzy region, which ' +
-      'has no empty rows to type into.',
+    'Add / remove: the ✕ cell at the end of a row removes that entry — its Nazwa and both Wyjście ' +
+      'switches go with it, and clearing the last occupied slot lowers the bound. Each grid has its ' +
+      'own add button under its last row: „Dodaj nwego abonenta" appends after the bound, „Dodaj ' +
+      'administratory" fills the first hole in the fixed 16-slot administratorzy region, which has ' +
+      'no empty rows to type into. „Cleanup gaps" closes the blank rows the users grid shows.',
   );
   const total = readTotal(image);
+  const gaps = countGaps(image);
   note(
     panel,
-    `The phone book is two fixed regions: slots 0001…${String(ADMIN_SLOTS).padStart(4, '0')} are the ` +
-      `„administratorzy" grid (${ADMIN_SLOTS} slots, only the populated ones get a row) and 0017… are ` +
-      `„uŁytkownicy"; the head keeps the entry bound ${total} at 0x000F, which is where the next ` +
-      `„Dodaj nwego abonenta" lands.`,
+    `The phone book is two fixed regions: 0001…${String(ADMIN_SLOTS).padStart(4, '0')} are the ` +
+      `„administratorzy" slots and 0017…${String(total).padStart(4, '0')} „uŁytkownicy" — the head keeps ` +
+      `that bound ${total} at 0x000F. The users region has ${gaps} empty slot${gaps === 1 ? '' : 's'} inside ` +
+      'the bound, shown as blank rows; „Cleanup gaps" moves the entries down so there are none and ' +
+      'lowers the bound. The administratorzy region keeps its holes, since it is a fixed 16 slots and ' +
+      'its grid never draws an empty one.',
   );
 }
 
@@ -652,7 +688,75 @@ async function readDevice(): Promise<void> {
   }
 }
 
+/**
+ * The save paths ask before writing when the users region has gaps: holes there are blank rows the
+ * vendor's own grid draws, and the head's bound stays past the last entry. The prompt is a card in
+ * the page rather than a browser dialog — this is a PWA that has to keep working on a phone.
+ */
+let pendingSave: () => void = () => {};
+
+function hidePrompt(): void {
+  const host = document.getElementById('prompt');
+  if (host !== null) {
+    host.hidden = true;
+    host.replaceChildren();
+  }
+}
+
+function askCleanup(action: () => void): void {
+  const host = document.getElementById('prompt');
+  const img = state.image;
+  if (host === null || img === null) {
+    action();
+    return;
+  }
+  pendingSave = action;
+  host.hidden = false;
+  host.replaceChildren();
+  const gaps = countGaps(img);
+  note(
+    host,
+    `The users region has ${gaps} empty slot${gaps === 1 ? '' : 's'} inside the entry bound, which ` +
+      'writes as a blank row. Cleanup moves the entries down so there are no gaps and lowers the ' +
+      'bound at 0x000F.',
+  );
+  const clean = el('button', 'act', 'Cleanup and save');
+  clean.addEventListener('click', () => {
+    const go = pendingSave;
+    hidePrompt();
+    if (state.image !== null) {
+      compactAbonents(state.image);
+    }
+    repaint();
+    go();
+  });
+  const asIs = el('button', 'act', 'Save as is');
+  asIs.addEventListener('click', () => {
+    const go = pendingSave;
+    hidePrompt();
+    go();
+  });
+  add(host, clean);
+  add(host, asIs);
+}
+
 async function writeDevice(): Promise<void> {
+  const s = session;
+  const img = state.image;
+  if (s === null || img === null) {
+    fail('Nothing to write — read an image first.');
+    return;
+  }
+  if (countGaps(img) > 0) {
+    askCleanup(() => {
+      void writeDeviceRaw();
+    });
+    return;
+  }
+  await writeDeviceRaw();
+}
+
+async function writeDeviceRaw(): Promise<void> {
   const s = session;
   if (s === null || state.image === null) {
     fail('Nothing to write — read an image first.');
@@ -696,6 +800,19 @@ async function loadFile(): Promise<void> {
 }
 
 function saveFile(): void {
+  const img = state.image;
+  if (img === null) {
+    fail('No image to save.');
+    return;
+  }
+  if (countGaps(img) > 0) {
+    askCleanup(saveFileRaw);
+    return;
+  }
+  saveFileRaw();
+}
+
+function saveFileRaw(): void {
   if (state.image === null) {
     fail('No image to save.');
     return;
@@ -706,6 +823,17 @@ function saveFile(): void {
   a.setAttribute('href', URL.createObjectURL(blob));
   a.setAttribute('download', 'brama-memdump.bme');
   add(actions, a);
+}
+
+/** Close the blank rows in the users region and lower the entry bound. */
+function cleanup(): void {
+  const img = state.image;
+  if (img === null) {
+    fail('No image loaded.');
+    return;
+  }
+  compactAbonents(img);
+  repaint();
 }
 
 /**
@@ -895,8 +1023,7 @@ actionButton('Monitoring', () => {
 });
 actionButton('Rozlacz', disconnect);
 actionButton('Save .bme', saveFile);
-actionButton('Dodaj nwego abonenta', addAbonent);
-actionButton('Dodaj administratory', addAdmin);
+actionButton('Cleanup gaps', cleanup);
 todoButton('Zdarzenia (other path)');
 todoButton('Internet');
 

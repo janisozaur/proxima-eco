@@ -151,6 +151,67 @@ export function writeTotal(image: Uint8Array, total: number): void {
   image[TOTAL_COUNT_AT + 1] = (total >> 8) & 0xff;
 }
 
+/**
+ * Empty slots inside the users region `17..bound` — the blank rows the vendor's grid shows. Holes
+ * inside the fixed 16-slot administratorzy region are **not** counted: that region is fixed and its
+ * grid never draws an empty slot, so its holes are legitimate.
+ */
+export function countGaps(image: Uint8Array): number {
+  const total = Math.min(ABONENT_SLOTS, readTotal(image));
+  let gaps = 0;
+  for (let k = ADMIN_SLOTS + 1; k <= total; k++) {
+    if (image[PHONE_BASE + (k - 1) * PHONE_SLOT] === 0) {
+      gaps += 1;
+    }
+  }
+  return gaps;
+}
+
+/**
+ * Close the gaps in the users region: move the populated entries down so they are dense from slot
+ * 17 up, keeping their order, and lower the entry bound. Two things are deliberately left alone:
+ * the administratorzy region keeps its holes (it is a fixed 16 slots and its grid never shows an
+ * empty one), and the CLIP table at `0x8CBF` is a separate table whose row indices are not slot
+ * numbers — in both dumps it is `0xFF` except for row 0 — so renumbering entries says nothing
+ * about it.
+ */
+export function compactAbonents(image: Uint8Array): number {
+  const total = Math.min(ABONENT_SLOTS, readTotal(image));
+  const kept: number[] = [];
+  for (let k = ADMIN_SLOTS + 1; k <= total; k++) {
+    if (image[PHONE_BASE + (k - 1) * PHONE_SLOT] !== 0) {
+      kept.push(k);
+    }
+  }
+  const gaps = total - ADMIN_SLOTS - kept.length;
+  if (gaps === 0) {
+    return 0;
+  }
+
+  // read every payload before writing any, so the rewrite cannot eat something not yet moved
+  const flags = kept.map((k) => image[FLAG_BASE + k - 1]);
+  const phones = kept.map((k) => image.slice(PHONE_BASE + (k - 1) * PHONE_SLOT, PHONE_BASE + k * PHONE_SLOT));
+  const names = kept.map((k) => image.slice(NAME_BASE + (k - 1) * NAME_SLOT, NAME_BASE + k * NAME_SLOT));
+
+  for (let k = ADMIN_SLOTS + 1; k <= total; k++) {
+    clearAbonent(image, k);
+  }
+  for (let i = 0; i < kept.length; i++) {
+    const k = ADMIN_SLOTS + 1 + i;
+    image[FLAG_BASE + k - 1] = flags[i];
+    copySlot(image, PHONE_BASE + (k - 1) * PHONE_SLOT, phones[i]);
+    copySlot(image, NAME_BASE + (k - 1) * NAME_SLOT, names[i]);
+  }
+  writeTotal(image, ADMIN_SLOTS + kept.length);
+  return gaps;
+}
+
+function copySlot(image: Uint8Array, at: number, bytes: Uint8Array): void {
+  for (let i = 0; i < bytes.length; i++) {
+    image[at + i] = bytes[i];
+  }
+}
+
 /** Occupied-slot count, which is what the vendor status bar reports as "abonenci: n/1000". */
 export function countAbonents(image: Uint8Array): number {
   let n = 0;

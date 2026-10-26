@@ -301,6 +301,41 @@ td.flagOff.dirty {
   outline: 1px solid var(--warn);
 }
 
+/* the per-row delete cell, at the end of the row */
+th.del,
+td.del {
+  width: 26px;
+  text-align: center;
+  color: var(--ink-faint);
+}
+
+td.del {
+  cursor: pointer;
+}
+
+td.del:hover {
+  background: var(--panel-2);
+  color: var(--bad);
+}
+
+/* the add button belongs under its own grid, where the new entry lands */
+.addbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+button.act.add {
+  border-style: dashed;
+  background: transparent;
+  color: var(--ink-dim);
+}
+
+button.act.add:hover {
+  color: var(--accent);
+  border-style: solid;
+}
+
 /* ---------- actions ---------- */
 .actions {
   display: flex;
@@ -403,4 +438,20 @@ footer strong {
 footer .bad {
   color: var(--bad);
   font-weight: 700;
+}
+
+/* the save prompt: it only appears while it is waiting for a decision */
+.prompt {
+  background: var(--panel-2);
+  border: 1px solid var(--warn);
+  border-radius: 12px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: start;
+}
+
+.prompt[hidden] {
+  display: none;
 }

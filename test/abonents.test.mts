@@ -10,6 +10,19 @@ import { ok } from 'node:assert';
 function eq(actual: unknown, expected: unknown): void {
   ok(actual === expected, `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
 }
+
+/** The phone/name slot as text — these tests only ever hold ASCII, so no CP-1250 table needed. */
+function slotText(image: Uint8Array, base: number, slot: number, poz: number): string {
+  let out = '';
+  for (let i = 0; i < slot; i++) {
+    const byte = image[base + (poz - 1) * slot + i];
+    if (byte === 0) {
+      break;
+    }
+    out += String.fromCharCode(byte);
+  }
+  return out;
+}
 import {
   FLAG_BASE,
   ABONENT_SLOTS,
@@ -35,6 +48,8 @@ import {
   nextFreeSlot,
   lastOccupied,
   writeTotal,
+  countGaps,
+  compactAbonents,
 } from '../src/abonents.ts';
 import { IMAGE_LEN } from '../src/protocol.ts';
 
@@ -195,4 +210,34 @@ function put(bytes: Uint8Array, at: number, text: string): void {
   writeTotal(image, lastOccupied(image));
   eq(readTotal(image), 1);
   eq(countAbonents(image), 1);
+}
+
+// ---- the gaps inside the users region, and closing them ----
+{
+  const image = new Uint8Array(IMAGE_LEN);
+  writeTotal(image, 20);
+  for (const k of [1, 3]) {
+    writeAbonentPhone(image, k, `+48000000${k}0`);
+    image[FLAG_BASE + k - 1] = WYJ1_BIT;
+  }
+  for (const k of [17, 19, 20]) {
+    writeAbonentPhone(image, k, `+4870000${k}0`);
+    writeAbonentName(image, k, `u${k}`);
+    image[FLAG_BASE + k - 1] = WYJ1_BIT | WYJ2_BIT;
+  }
+  eq(countGaps(image), 1); // slot 18 is blank inside the bound
+
+  const closed = compactAbonents(image);
+  eq(closed, 1);
+  eq(readTotal(image), 19); // 16 admin slots plus the three users, dense
+  eq(countGaps(image), 0);
+
+  // the order is kept, and the administratorzy region is left where it was
+  eq(slotText(image, PHONE_BASE, PHONE_SLOT, 17), '+4870000170');
+  eq(slotText(image, PHONE_BASE, PHONE_SLOT, 18), '+4870000190');
+  eq(slotText(image, PHONE_BASE, PHONE_SLOT, 19), '+4870000200');
+  eq(slotText(image, NAME_BASE, NAME_SLOT, 19), 'u20');
+  eq(image[FLAG_BASE + 18], WYJ1_BIT | WYJ2_BIT);
+  eq(image[PHONE_BASE + 2 * PHONE_SLOT] !== 0, true); // admin slot 3 did not move
+  eq(image[PHONE_BASE + 3 * PHONE_SLOT], 0); // admin slot 4 is still a hole
 }
