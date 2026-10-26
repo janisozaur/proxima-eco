@@ -32,9 +32,11 @@ import {
   NAME_MAX,
   WYJ1_BIT,
   WYJ2_BIT,
+  ADMIN_SLOTS,
   readAbonents,
   readAdminInfo,
-  readSplit,
+  readTotal,
+  countGroups,
   countAbonents,
 } from '../src/abonents.ts';
 import { decodeCp1250, encodeCp1250 } from '../src/cp1250.ts';
@@ -323,11 +325,12 @@ function renderAbonents(panel: HTMLElement): void {
     'Type in a Telefon / Nazwa cell to change it, click a Wyjście cell to toggle it, double-click a ' +
       'marked cell to put the loaded value back. „Zapis to device" or „Save .bme" carries the change.',
   );
-  const s = readSplit(image);
+  const total = readTotal(image);
   note(
     panel,
-    `The head keeps ${s.admins} administrators at 0x000E and ${s.total} entries at 0x000F, so the ` +
-      `first ${s.admins} slots are the „administratorzy" grid and the rest „uŁytkownicy".`,
+    `The phone book is two fixed regions: slots 0001…${String(ADMIN_SLOTS).padStart(4, '0')} are the ` +
+      `„administratorzy" grid (${ADMIN_SLOTS} slots, some unpopulated) and 0017… are „uŁytkownicy"; ` +
+      `the head keeps the entry bound ${total} at 0x000F.`,
   );
 }
 
@@ -702,10 +705,10 @@ function renderFooter(): void {
     if (state.image === null) {
       ab.textContent = `abonenci: –/${ABONENT_SLOTS}`;
     } else {
-      const s = readSplit(state.image);
+      const c = countGroups(state.image);
       ab.textContent =
         `abonenci: ${countAbonents(state.image)}/${ABONENT_SLOTS} · ` +
-        `administratorzy ${s.admins} · uŁytkownicy ${s.total - s.admins}`;
+        `administratorzy ${c.admins}/${ADMIN_SLOTS} · uŁytkownicy ${c.users}`;
     }
   }
   const ev = document.getElementById('events');

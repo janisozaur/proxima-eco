@@ -25,28 +25,43 @@ export const WYJ1_BIT = 0x01;
 export const WYJ2_BIT = 0x02;
 
 /**
- * The config head carries the two counts the vendor splits its lists on: a 16-bit little-endian
- * **total entry count** at `0x0F` (the packer writes `length(abonents)` there, and the unpacker
- * reads exactly that many slots) and an **administrator count** at `0x0E` (a byte, 0..255 — the
- * packer stores it straight from a `TListView` item count, clamped to `0xFF`). The CSV export
- * writes a `;"Administratorzy";;;` separator row, so the table is one array read as two groups,
- * and the administrator group comes **first**: slots `1..admins` are administrators, the rest
- * users. Confirmed against the vendor's own grid, whose `Poz.` column for the
- * `administratorzy` list runs `0001…` while the `uzytownicy` list continues after it.
+ * The phone book is **two fixed regions**, not one list split by a stored count: slots `1..16` are
+ * the `administratorzy` grid — always 16 slots, some of them unpopulated — and slots `17..1000` are
+ * the `uŁytkownicy` grid. Both dumps agree: the occupied slots inside `1..16` are exactly the
+ * entries the vendor lists as administrators (`1,2,3` in one dump, `1,2,3,5` in the other), and the
+ * first occupied slot from 17 on is `17` in both. The head's `0x000F` word is the total entry
+ * bound (`length(abonents)`, written by the packer and read back by the unpacker); the byte at
+ * `0x000E` is a `TListView` item count the packer also stores, and it is **not** the split — it is
+ * `100` in both dumps while the admin region is 16 slots.
  */
-export const ADMIN_COUNT_AT = 0x000e; // administrators, slots 1..admins
+export const ADMIN_SLOTS = 16; // fixed administratorzy region, slots 1..16
 export const TOTAL_COUNT_AT = 0x000f; // 16-bit little-endian
 
-export interface Split {
-  admins: number;
-  total: number;
+/** The total entry bound the config head keeps at `0x000F`. */
+export function readTotal(image: Uint8Array): number {
+  return image[TOTAL_COUNT_AT] | (image[TOTAL_COUNT_AT + 1] << 8);
 }
 
-export function readSplit(image: Uint8Array): Split {
-  return {
-    admins: image[ADMIN_COUNT_AT],
-    total: image[TOTAL_COUNT_AT] | (image[TOTAL_COUNT_AT + 1] << 8),
-  };
+/** How many slots in each region actually hold an entry. */
+export interface Counts {
+  admins: number; // occupied slots in 1..ADMIN_SLOTS
+  users: number; // occupied slots in ADMIN_SLOTS+1..ABONENT_SLOTS
+}
+
+export function countGroups(image: Uint8Array): Counts {
+  let admins = 0;
+  let users = 0;
+  for (let k = 0; k < ABONENT_SLOTS; k++) {
+    if (image[PHONE_BASE + k * PHONE_SLOT] === 0) {
+      continue;
+    }
+    if (k < ADMIN_SLOTS) {
+      admins += 1;
+    } else {
+      users += 1;
+    }
+  }
+  return {admins, users};
 }
 
 export interface Abonent {
@@ -55,12 +70,11 @@ export interface Abonent {
   name: string;
   wyj1: boolean;
   wyj2: boolean;
-  admin: boolean; // one of the first `admins` slots
+  admin: boolean; // one of the 16 administratorzy slots
 }
 
 /** Occupied slots only — an empty slot has no phone string. */
 export function readAbonents(image: Uint8Array): Abonent[] {
-  const split = readSplit(image);
   const out: Abonent[] = [];
   for (let k = 0; k < ABONENT_SLOTS; k++) {
     const phone = decodeCp1250(image, PHONE_BASE + k * PHONE_SLOT, PHONE_MAX);
@@ -74,7 +88,7 @@ export function readAbonents(image: Uint8Array): Abonent[] {
       name: decodeCp1250(image, NAME_BASE + k * NAME_SLOT, NAME_MAX),
       wyj1: (flag & WYJ1_BIT) !== 0,
       wyj2: (flag & WYJ2_BIT) !== 0,
-      admin: k < split.admins,
+      admin: k < ADMIN_SLOTS,
     });
   }
   return out;
