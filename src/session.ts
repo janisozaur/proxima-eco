@@ -75,11 +75,15 @@ export class Session {
 
   /**
    * Bulk read. The measured loop always requests a full page, so the final page overshoots the
-   * window end; the device clamps it and echoes the requested address back.
+   * window end; the device clamps it and echoes the requested address back. `onPage` is called
+   * after each page lands, which is what lets the UI draw the vendor's „Odczytano %s %3.0f%s"
+   * progress bar.
    */
-  async readWindow(): Promise<Uint8Array> {
+  async readWindow(onPage?: (done: number, total: number) => void): Promise<Uint8Array> {
     const image = new Uint8Array(IMAGE_LEN);
-    for (const addr of readPlan()) {
+    const plan = readPlan();
+    for (let i = 0; i < plan.length; i++) {
+      const addr = plan[i];
       const f = await this.t.request(CMD_READ, encodePage(addr, CHUNK_LEN));
       expect(f, CMD_READ);
       const p = decodePage(f.body);
@@ -89,6 +93,7 @@ export class Session {
         );
       }
       copyInto(image, addr, p.data);
+      onPage?.(i + 1, plan.length);
     }
     return image;
   }
@@ -97,8 +102,10 @@ export class Session {
    * Bulk write. Measured order is write page → read-back verify, per page, then the end-of-image
    * marker. A page whose read-back differs was rejected by the firmware.
    */
-  async writeWindow(image: Uint8Array): Promise<void> {
-    for (const addr of readPlan()) {
+  async writeWindow(image: Uint8Array, onPage?: (done: number, total: number) => void): Promise<void> {
+    const plan = readPlan();
+    for (let i = 0; i < plan.length; i++) {
+      const addr = plan[i];
       const count = writeCount(addr);
       const data = image.subarray(addr, addr + count);
 
@@ -108,11 +115,12 @@ export class Session {
       const r = await this.t.request(CMD_READ, encodePage(addr, count));
       expect(r, CMD_READ);
       const p = decodePage(r.body);
-      for (let i = 0; i < count; i++) {
-        if (p.data[i] !== data[i]) {
+      for (let k = 0; k < count; k++) {
+        if (p.data[k] !== data[k]) {
           throw new PageRejected(addr);
         }
       }
+      onPage?.(i + 1, plan.length);
     }
 
     const marker = await this.t.request(CMD_WRITE, encodePage(FLUSH_ADDR, 0));

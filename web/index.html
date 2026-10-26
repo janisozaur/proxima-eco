@@ -1,27 +1,50 @@
 <!doctype html>
-<html lang="en">
+<html lang="pl">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, viewport-fit=cover" />
-    <title>bram GSM gate — memory dump</title>
+    <title>Programator bramy GSM Eco</title>
     <link rel="manifest" href="./manifest.json" />
-    <meta name="theme-color" content="#20242a" />
+    <meta name="theme-color" content="#0e1116" />
+    <meta name="description" content="WebHID client for the PROXIMA bram GSM Eco gate" />
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./app.css" />
     <script type="module" src="./app.js"></script>
   </head>
   <body>
-    <h1>bram GSM gate — memory dump</h1>
-    <p>
-      Reads the whole transfer window from the gate over WebHID and produces a
-      <code>.bme</code> file the vendor client can open. Nothing is uploaded; the page talks only
-      to the device.
-    </p>
-    <form>
-      <label for="password">Password (8 characters max; the service password never reaches the gate)</label>
-      <input id="password" type="text" maxlength="8" />
-    </form>
-    <button id="go" type="button" onclick="void 0">Connect and read</button>
-    <p id="result">Not started.</p>
-    <a id="download">Download the .bme file</a>
+    <header>
+      <h1 class="brand">Programator bramy GSM Eco</h1>
+      <nav class="tabs" aria-label="Zakadkay">
+        <button class="tab" data-tab="abonents" aria-current="true">1 Abonenci</button>
+        <button class="tab" data-tab="admin">2 Info admin.</button>
+        <button class="tab" data-tab="reakcje">3 Clip i Wej-&gt;Wyj</button>
+        <button class="tab" data-tab="settings">4 Ustawienia</button>
+        <button class="tab" data-tab="events">5 Zdarzenia</button>
+        <button class="tab" data-tab="gsm">6 GSM</button>
+        <button class="tab" data-tab="monitoring">8 Monitoring</button>
+        <button class="tab" data-tab="net">9 Internet</button>
+        <button class="tab" data-tab="serwis">10 Serwis</button>
+      </nav>
+      <span class="state" data-s="idle"><i data-s="idle"></i><span>Not connected</span></span>
+    </header>
+
+    <main id="panels">
+      <section class="panel" data-panel="abonents" hidden></section>
+      <section class="panel" data-panel="admin" hidden></section>
+      <section class="panel" data-panel="reakcje" hidden></section>
+      <section class="panel" data-panel="settings" hidden></section>
+      <section class="panel" data-panel="events" hidden></section>
+      <section class="panel" data-panel="gsm" hidden></section>
+      <section class="panel" data-panel="monitoring" hidden></section>
+      <section class="panel" data-panel="net" hidden></section>
+      <section class="panel" data-panel="serwis" hidden></section>
+      <div class="actions wide" id="actions"></div>
+    </main>
+
+    <footer>
+      <span class="src" id="source">No image loaded.</span>
+      <span class="count" id="abonents">abonenci: –/1000</span>
+      <span class="count" id="events">zdarze: –/300</span>
+    </footer>
   </body>
 </html>

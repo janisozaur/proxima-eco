@@ -1,0 +1,346 @@
+:root {
+  --bg: #0e1116;
+  --panel: #151a21;
+  --panel-2: #1a2028;
+  --line: rgba(255, 255, 255, 0.07);
+  --line-soft: rgba(255, 255, 255, 0.045);
+  --ink: #e8edf2;
+  --ink-dim: #9aa7b4;
+  --ink-faint: #6b7885;
+  --accent: #4fd1b0;
+  --warn: #d9a441;
+  --bad: #e0637a;
+  --pill: rgba(255, 255, 255, 0.05);
+}
+
+.light, .light-theme {
+  --bg: #f4f6f8;
+  --panel: #ffffff;
+  --panel-2: #f9fbfd;
+  --line: rgba(0, 0, 0, 0.10);
+  --line-soft: rgba(0, 0, 0, 0.055);
+  --ink: #10161c;
+  --ink-dim: #55626f;
+  --ink-faint: #8b98a5;
+  --accent: #1d8a63;
+  --warn: #8a6a1e;
+  --bad: #a83246;
+  --pill: rgba(0, 0, 0, 0.04);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 500 15px / 1.45 ui-sans-serif, "Segoe UI", system-ui, sans-serif;
+  font-feature-settings: "tnum" 1, "cv11" 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- top bar: title + status, nav bar underneath ---------- */
+header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "brand state"
+    "tabs  tabs";
+  align-items: center;
+  gap: 12px 18px;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  grid-area: brand;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+  font-size: 17px;
+  white-space: nowrap;
+}
+
+.tabs {
+  grid-area: tabs;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: var(--pill);
+}
+
+.tab {
+  border: 0;
+  background: transparent;
+  color: var(--ink-dim);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tab[aria-current="true"] {
+  background: var(--panel-2);
+  color: var(--ink);
+  box-shadow: 0 1px 0 var(--line);
+}
+
+.tab:hover {
+  color: var(--ink);
+}
+
+.state {
+  grid-area: state;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--pill);
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+
+.state i {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--ink-faint);
+}
+
+.state i[data-s="read"] { background: var(--accent); }
+.state i[data-s="write"] { background: var(--warn); }
+.state i[data-s="live"] { background: var(--accent); }
+.state i[data-s="error"] { background: var(--bad); }
+
+/* ---------- panels: only the selected tab is laid out ---------- */
+main {
+  padding: 22px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: 16px;
+  grid-column: 1 / -1;
+}
+
+.panel[hidden] {
+  display: none;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.card h2 {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-dim);
+  letter-spacing: 0.2px;
+}
+
+.kpi {
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -1px;
+}
+
+.kpi small {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-dim);
+}
+
+.note {
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+
+.rule {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  margin-top: 12px;
+}
+
+.rule[data-v] { background: var(--warn); }
+.rule[data-v="0"] { background: var(--line); }
+
+/* ---------- the abonenci table, mirroring the vendor layout ---------- */
+.table {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 4px 10px 10px;
+  overflow-x: auto;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+caption {
+  caption-side: top;
+  text-align: left;
+  padding: 10px;
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+
+th, td {
+  border: 1px solid var(--line-soft);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  color: var(--ink-dim);
+  font-weight: 600;
+}
+
+td.num {
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  width: 52px;
+}
+
+td.phone {
+  font-variant-numeric: tabular-nums;
+  width: 140px;
+}
+
+td.flag {
+  width: 34px;
+  text-align: center;
+  color: var(--ink-faint);
+}
+
+/* ---------- actions ---------- */
+.actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+button.act {
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--ink);
+  border-radius: 10px;
+  padding: 9px 16px;
+  font: inherit;
+  cursor: pointer;
+}
+
+button.act[data-todo] {
+  color: var(--ink-faint);
+  border-style: dashed;
+  background: transparent;
+  cursor: default;
+}
+
+.actions input.file {
+  border: 1px dashed var(--line);
+  background: transparent;
+  color: var(--ink-dim);
+  border-radius: 10px;
+  padding: 9px 16px;
+  font: inherit;
+}
+
+/* ---------- key/value cards ---------- */
+.card dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 20px;
+  align-items: baseline;
+}
+
+.card dt {
+  color: var(--ink-dim);
+  font-weight: 600;
+}
+
+.card dd {
+  font-variant-numeric: tabular-nums;
+}
+
+.mono {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12.5px;
+  letter-spacing: 0.3px;
+}
+
+/* ---------- progress, mirroring „Odczytano %s %3.0f%s" ---------- */
+.progress {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  position: relative;
+  overflow: hidden;
+}
+
+.progress i {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transform-origin: left;
+}
+
+.bad {
+  color: var(--bad);
+  font-weight: 700;
+}
+
+.empty {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+/* ---------- footer status strip, like the vendor's ---------- */
+footer {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 22px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+
+footer strong {
+  color: var(--ink);
+}
+
+footer .bad {
+  color: var(--bad);
+  font-weight: 700;
+}

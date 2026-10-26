@@ -11,6 +11,7 @@ const PORT = 8080;
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.json': 'application/json',
   '.svg': 'image/svg+xml',
@@ -19,11 +20,11 @@ const TYPES: Record<string, string> = {
 
 const server = createServer(async (req, res) => {
   const raw = req.url ?? '/';
-  const path = raw === '/' ? '/index.html' : raw;
-  const name = path.split('?')[0].replace(/^\//, '');
+  const name = raw.split('?')[0].replace(/^\//, '');
+  const file = name === '' ? 'index.html' : name;
   try {
-    const body = await readFile(`${ROOT}/${name}`);
-    const ext = name.slice(name.lastIndexOf('.'));
+    const body = await readFile(`${ROOT}/${file}`);
+    const ext = file.slice(file.lastIndexOf('.'));
     res.setHeader('content-type', TYPES[ext] ?? 'application/octet-stream');
     await res.end(body);
   } catch {

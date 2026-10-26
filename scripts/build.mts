@@ -21,7 +21,7 @@ await build({
   sourcemap: true,
 });
 
-for (const name of ['index.html', 'manifest.json', 'sw.js', 'icon.svg']) {
+for (const name of ['index.html', 'app.css', 'manifest.json', 'sw.js', 'icon.svg']) {
   await copyFile(`web/${name}`, `${OUT}/${name}`);
 }
 
