@@ -1,0 +1,17 @@
+{
+  "name": "bram GSM gate — memory dump",
+  "short_name": "gate dump",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#20242a",
+  "theme_color": "#20242a",
+  "description": "WebHID client for the PROXIMA bram GSM gate",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ]
+}
