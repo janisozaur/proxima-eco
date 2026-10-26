@@ -182,6 +182,8 @@ const LANDMARKS: Record<number, string> = {
 const CELL_SLOTS = new Map<HTMLElement, CellSlot>();
 const FLAG_CELLS = new Map<HTMLElement, { at: number; bit: number }>();
 const OUT_CELLS = new Map<HTMLElement, { n: number }>(); // the „Czas monostabilnej pracy" cells
+const TIME_ROWS = new Map<number, HTMLElement[]>(); // one output's whole time row, hidden when bistabilny
+const READ_CELLS = new Map<number, HTMLElement>(); // the vendor's own „0h 0min. 5.0sek." read-out
 
 interface CellSlot {
   at: number; // where the slot starts in the image
@@ -222,6 +224,8 @@ function beginPaint(): void {
   CELL_SLOTS.clear();
   FLAG_CELLS.clear();
   OUT_CELLS.clear();
+  TIME_ROWS.clear();
+  READ_CELLS.clear();
   for (const o of paintObservers) {
     o.disconnect();
   }
@@ -318,11 +322,52 @@ function outMutations(ms: MutationRecord[]): void {
     if (cell.textContent !== shown) {
       cell.textContent = shown;
     }
+    showTimeRow(f.n, img);
     touched = true;
     markCell(cell, tenths !== originTenths(f.n));
   }
   if (touched) {
     renderFooter();
+  }
+}
+
+/**
+ * Show or hide one output's whole time row, and keep the vendor's own read-out in step with the
+ * value the image holds.
+ *
+ * The vendor keeps the field out of the form while an output is bistabilny: the DFM has
+ * `Visible = False` on `LB_CzasMonoWy1`, `LB_CzasWlaczeniaWy1`, `LB_JedCzasMonoWy1`,
+ * `ME_CzasWlaczeniaWy1` and `UpDo_CzasWlaczeniaWy1`, and `CB_TrybPracyWyjscia1Change`
+ * (`0x4CCC7C`) sets Visible and Enabled to False for all five when the combo picks item 0
+ * („bistabilny") and to True when it picks item 1 („monostabilny") — the branch that also calls
+ * `ME_CzasWlaczeniaWy1Change` (`0x4CC3E8`) to repaint the memo. So a bistable output has no time
+ * to show, and the web client hides the row the same way with the `hidden` attribute.
+ *
+ * Unlike the vendor, the time itself is left in the image while it is hidden: that handler zeroes
+ * `DAT_004FDFC4` when it picks bistabilny, so the vendor's own saved image loses the time and a
+ * round trip through bistabilny silently replaces it with 0. Keeping the value means flipping the
+ * mode back is always reversible.
+ */
+function showTimeRow(n: number, img: Uint8Array): void {
+  const row = TIME_ROWS.get(n);
+  if (row === undefined) {
+    return;
+  }
+  const visible = !outBistabilny(img, n);
+  for (const cell of row) {
+    if (visible) {
+      cell.removeAttribute('hidden');
+    } else {
+      cell.setAttribute('hidden', '');
+    }
+  }
+  const read = READ_CELLS.get(n);
+  if (read === undefined) {
+    return;
+  }
+  const clock = showClock(outTenths(img, n));
+  if (read.textContent !== clock) {
+    read.textContent = clock;
   }
 }
 
@@ -349,7 +394,18 @@ function parseTenths(text: string): number {
 /** The vendor's own print of a time: `%.4d.%d` of tenths/10 and tenths%10. */
 function showTenths(tenths: number): string {
   const t = tenths < 0 ? 0 : tenths > OUT_TENTHS_MAX ? OUT_TENTHS_MAX : tenths;
-  return `${String(Math.trunc(t / 10)).padStart(4, '0')}.${t % 10} s`;
+  return `${String(Math.trunc(t / 10)).padStart(4, '0')}.${t % 10}`;
+}
+
+/**
+ * The same value the vendor prints next to the memo, from its `TUpDown` handler:
+ * `%dh %dmin. %d.%dsek.` of `v/36000`, `v%36000/600`, `v%36000%600/10` and `v%10` — 36000 is one
+ * hour in tenths, so the unit is 0.1 s and 50 tenths reads `0h 0min. 5.0sek.`.
+ */
+function showClock(tenths: number): string {
+  const t = tenths < 0 ? 0 : tenths > OUT_TENTHS_MAX ? OUT_TENTHS_MAX : tenths;
+  const rest = t % 36000;
+  return `${Math.trunc(t / 36000)}h ${Math.trunc(rest / 600)}min. ${Math.trunc((rest % 600) / 10)}.${rest % 10}sek.`;
 }
 
 /** The time and the mode output `n` held when the image was last read or loaded. */
@@ -651,6 +707,9 @@ function renderAdmin(panel: HTMLElement): void {
  * wejść i przycisków:", whose `LV_ReakcjeWejsc` grid is the 300-row table at `0x8CBF`. Only its row
  * framing and its 59-byte text column are decoded, so the numeric columns are printed as the raw
  * values they are rather than dressed up as the vendor's „Zdarzenie"/„Reakcja" captions.
+ *
+ * A bistabilny output shows no time at all — see `showTimeRow`, which mirrors the vendor's
+ * `Visible := False` on the memo and its labels.
  */
 function renderReakcje(panel: HTMLElement): void {
   const image = state.image;
@@ -661,10 +720,23 @@ function renderReakcje(panel: HTMLElement): void {
 
   const c = add(panel, el('div', 'card', ''));
   add(c, el('h2', '', 'Reakcje wyjść na CLIP:'));
-  const dl = add(c, el('dl', 'dl', ''));
+  const dl = add(c, el('dl', 'dl out', ''));
   for (const n of [1, 2]) {
     add(dl, el('dt', '', `Tryb pracy wyjścia ${n}:`));
     const mode = add(dl, el('dd', 'mode', outBistabilny(image, n) ? 'bistabilny' : 'monostabilny'));
+    add(dl, el('dd', '', '')); // the read-out column, empty while the output is bistabilny
+
+    const dt = add(dl, el('dt', '', `Czas monostabilnej pracy ${n}:`));
+    const time = add(dl, el('dd', 'edit', showTenths(outTenths(image, n))));
+    time.setAttribute('contenteditable', 'true');
+    time.spellcheck = false;
+    const read = add(dl, el('dd', 'read', showClock(outTenths(image, n))));
+    TIME_ROWS.set(n, [dt, time, read]);
+    READ_CELLS.set(n, read);
+    OUT_CELLS.set(time, {n});
+    showTimeRow(n, image);
+    markCell(time, outTenths(image, n) !== originTenths(n));
+
     mode.addEventListener('click', () => {
       const img = state.image;
       if (img === null) {
@@ -674,6 +746,7 @@ function renderReakcje(panel: HTMLElement): void {
       writeOut(img, n, outTenths(img, n), now);
       mode.textContent = now ? 'bistabilny' : 'monostabilny';
       markCell(mode, now !== originBistabilny(n));
+      showTimeRow(n, img);
       renderFooter();
     });
     mode.addEventListener('dblclick', () => {
@@ -685,15 +758,10 @@ function renderReakcje(panel: HTMLElement): void {
       writeOut(img, n, outTenths(img, n), want);
       mode.textContent = want ? 'bistabilny' : 'monostabilny';
       markCell(mode, false);
+      showTimeRow(n, img);
       renderFooter();
     });
 
-    add(dl, el('dt', '', `Czas monostabilnej pracy ${n}:`));
-    const time = add(dl, el('dd', 'edit', showTenths(outTenths(image, n))));
-    time.setAttribute('contenteditable', 'true');
-    time.spellcheck = false;
-    OUT_CELLS.set(time, {n});
-    markCell(time, outTenths(image, n) !== originTenths(n));
     time.addEventListener('dblclick', () => {
       const img = state.image;
       if (img === null) {
@@ -703,6 +771,7 @@ function renderReakcje(panel: HTMLElement): void {
       writeOut(img, n, want, outBistabilny(img, n));
       time.textContent = showTenths(want);
       markCell(time, false);
+      showTimeRow(n, img);
       renderFooter();
     });
   }
@@ -712,7 +781,10 @@ function renderReakcje(panel: HTMLElement): void {
     'Click a Tryb cell to flip it between bistabilny and monostabilny; type in a Czas cell to change ' +
       'the time, in seconds with one decimal — it is stored as tenths, so 5.0 s is 50. Double-click ' +
       'either to put the loaded value back. Both halves of a word are written together, so flipping ' +
-      'the mode never disturbs the time and vice versa.',
+      'the mode never disturbs the time and vice versa. A bistabilny output has no time, so its Czas ' +
+      'row is hidden — the vendor sets Visible to False on the memo, its labels and its TUpDown in ' +
+      'that case — and the row comes back when the mode is flipped to monostabilny. The dim text ' +
+      'that case — and the dim text beside a time is the vendor\'s own read-out of the same value.',
   );
 
   const rows = readClipRows(image);

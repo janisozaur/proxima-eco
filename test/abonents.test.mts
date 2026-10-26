@@ -302,6 +302,14 @@ function put(bytes: Uint8Array, at: number, text: string): void {
   eq(outTenths(image, 2), 50);
   eq(outBistabilny(image, 2), false);
   eq(OUT2_AT - OUT1_AT, 2);
+
+  // flipping the mode keeps the time, which is what hiding a bistabilny output relies on
+  writeOut(image, 2, outTenths(image, 2), true);
+  eq(outTenths(image, 2), 50);
+  eq(outBistabilny(image, 2), true);
+  writeOut(image, 2, outTenths(image, 2), false);
+  eq(outTenths(image, 2), 50);
+  eq(outBistabilny(image, 2), false);
 }
 
 // ---- the reaction rows at 0x8CBF, and which of them are used ----

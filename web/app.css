@@ -444,6 +444,15 @@ dd.mode.dirty {
   background: var(--panel-2);
 }
 
+/* tab 3: the memo and the vendor's own read-out of it share one line */
+.card dl.out {
+  grid-template-columns: auto 1fr auto;
+}
+
+.card dd.read {
+  color: var(--ink-dim);
+}
+
 /* the reaction grid: its text column is editable, its numeric columns are raw values */
 td.edit {
   cursor: text;
