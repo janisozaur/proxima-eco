@@ -22,15 +22,17 @@ const BRANCH = 'gh-pages';
 
 function run(args: string[], cwd: string): string {
   const got = spawnSync(args[0], args.slice(1), {cwd, encoding: 'utf8', shell: false});
-  if (got.code !== 0) {
+  const code = got.status ?? got.exitCode ?? got.code;
+  if (code !== 0) {
     const err = (got.stderr ?? '').trim();
-    throw new Error(`${args.join(' ')} failed with ${got.code}: ${err}`);
+    const why = got.error ? `: ${got.error.code} on ${got.error.path ?? args[0]}` : `: ${err}`;
+    throw new Error(`${args.join(' ')} failed with ${code}${why}`);
   }
   return (got.stdout ?? '').trim();
 }
 
 // build first, so publishing cannot ship a stale dist
-run(['node', 'scripts/build.mts'], '.');
+run([process.execPath, 'scripts/build.mts'], '.');
 
 const where = join(tmpdir(), 'gate-web-pages');
 const site = join(where, 'site');
