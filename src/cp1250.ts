@@ -56,6 +56,17 @@ export function encodeByte(ch: string): number {
   return i < 0 ? 0x3f : i + 0x80; // '?' for a letter CP-1250 cannot represent
 }
 
+/** The first character that has no byte of its own, or `''` when the whole text can be stored. */
+export function unencodable(text: string): string {
+  for (const ch of text) {
+    const code = ch.charCodeAt(0);
+    if (code >= 0x80 && HIGH_CODE.indexOf(code) < 0) {
+      return ch;
+    }
+  }
+  return '';
+}
+
 /**
  * Write `text` as CP-1250 into `bytes` at `at`, zero-filling the rest of `limit` — the slot
  * convention the vendor writes (payload only, no length byte). Returns the number of bytes used.

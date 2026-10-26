@@ -47,6 +47,7 @@ import {
   eventCaption,
   reactionCaption,
   eventProperty,
+  textProblem,
   readTotal,
   countGroups,
   countAbonents,
@@ -245,10 +246,40 @@ function beginPaint(): void {
 }
 
 /**
- * What a mutation in an editable cell means: the text now in the cell is written straight back
- * into the image slot behind it, which is what makes the change reach the gate on „Zapis to
- * device" or „Save .bme". A phone cell going empty ↔ filled also adds or removes an entry, so the
- * grids and the head's bound at `0x000F` are rebuilt.
+ * Say why a typed value was refused, without touching the text the user is typing into. Rewriting
+ * the cell is what throws the caret away — and on the first `+` of a phone, what rebuilds the whole
+ * panel and drops the focus — so a refusal only marks the cell and leaves the draft alone.
+ */
+function rejectCell(cell: HTMLElement, why: string): void {
+  const parts: string[] = [];
+  for (const cls of cell.className.split(' ')) {
+    if (cls !== 'reject' && cls !== '') {
+      parts.push(cls);
+    }
+  }
+  if (why !== '') {
+    parts.push('reject');
+  }
+  cell.className = parts.join(' ');
+  if (why === '') {
+    cell.removeAttribute('title');
+  } else {
+    cell.setAttribute('title', why);
+  }
+}
+
+/**
+ * What a mutation in an editable cell means. The draft is checked against the slot before anything
+ * is written: the capacity is the vendor's own (`string[18]` phone, `string[15]` name, and the
+ * config head's 4/5/9), CP-1250 has no byte for some letters, and a phone has to start with `+`
+ * because the gate needs the country code. An unacceptable draft is **not** written to the image and
+ * the cell is not rewritten either — the image keeps the last value that did fit, and the cell only
+ * gets a `reject` class with a `title` saying why, so the caret stays where the user left it and
+ * typing more characters never moves it.
+ *
+ * A phone going from filled to empty really does remove an entry, so the grids are rebuilt. A phone
+ * going the other way only moves the bound: the row is already on screen, so the panel is left alone
+ * and the focus survives the `+`.
  */
 function cellMutations(ms: MutationRecord[]): void {
   const img = state.image;
@@ -256,6 +287,7 @@ function cellMutations(ms: MutationRecord[]): void {
     return;
   }
   let touched = false;
+  let removed = false;
   for (const m of ms) {
     const node = m.target;
     if (node === null) {
@@ -269,25 +301,29 @@ function cellMutations(ms: MutationRecord[]): void {
     if (slot === undefined) {
       continue;
     }
+    const draft = cell.textContent;
+    const problem = textProblem(draft, slot.limit, slot.phone);
+    if (problem !== '') {
+      rejectCell(cell, problem);
+      continue;
+    }
+    rejectCell(cell, '');
     const before = decodeCp1250(img, slot.at, slot.limit);
-    encodeCp1250(img, slot.at, slot.limit, cell.textContent);
+    encodeCp1250(img, slot.at, slot.limit, draft);
     const stored = decodeCp1250(img, slot.at, slot.limit);
-    if (cell.textContent !== stored) {
-      // the slot is shorter than what was typed, or a letter has no CP-1250 byte: show what the
-      // image actually holds rather than what was typed
-      cell.textContent = stored;
-    }
-    if (slot.phone && (before === '') !== (stored === '')) {
-      // an entry was added or removed: the grids and the head's bound follow the table
-      if (stored === '') {
-        clearAbonent(img, slot.poz);
-      }
-      syncBound(img, slot.poz);
-      repaint();
-      return;
-    }
     touched = true;
     markCell(cell, stored !== originText(slot.at, slot.limit));
+    if (slot.phone && before !== '' && stored === '') {
+      clearAbonent(img, slot.poz);
+      syncBound(img, slot.poz);
+      removed = true;
+    } else if (slot.phone && before === '' && stored !== '') {
+      syncBound(img, slot.poz);
+    }
+  }
+  if (removed) {
+    repaint();
+    return;
   }
   if (touched) {
     renderFooter();
@@ -306,8 +342,9 @@ function watchCells(roots: HTMLElement[], handle: (ms: MutationRecord[]) => void
 
 /**
  * A typed „Czas monostabilnej pracy" cell is written back as tenths of a second, which is what the
- * image holds, and the cell is then re-set to the canonical form so it always shows what the image
- * actually says. The mode bit of the same word is left alone.
+ * image holds. The draft is kept in the cell: rewriting it to the canonical form on every keystroke
+ * is what throws the caret away, so a refusal only marks the cell and a valid draft stays exactly as
+ * typed. The read-out column is not editable, so it is the one that is free to follow the image.
  */
 function outMutations(ms: MutationRecord[]): void {
   const img = state.image;
@@ -331,12 +368,15 @@ function outMutations(ms: MutationRecord[]): void {
     if (cell.className.split(' ').includes('off')) {
       continue; // a greyed-out row is inert: nothing typed into it can reach the image
     }
-    const tenths = parseTenths(cell.textContent);
-    writeOut(img, f.n, tenths, outBistabilny(img, f.n));
-    const shown = showTenths(tenths);
-    if (cell.textContent !== shown) {
-      cell.textContent = shown;
+    const draft = cell.textContent;
+    const why = tenthsProblem(draft);
+    if (why !== '') {
+      rejectCell(cell, why);
+      continue;
     }
+    rejectCell(cell, '');
+    const tenths = parseTenths(draft);
+    writeOut(img, f.n, tenths, outBistabilny(img, f.n));
     paintTimeRow(f.n, img);
     touched = true;
     markCell(cell, tenths !== originTenths(f.n));
@@ -344,6 +384,27 @@ function outMutations(ms: MutationRecord[]): void {
   if (touched) {
     renderFooter();
   }
+}
+
+/**
+ * Why a typed time is refused, or `''` when it is acceptable. The shape is the vendor's own edit
+ * mask `9999.9` (`ME_CzasWlaczeniaWy1Change` at `0x4CC3E8`), so at most four digits before the
+ * decimal point and one after; a trailing point is a draft in progress and is allowed. An empty
+ * cell is refused rather than read as zero, so deleting the whole value never silently writes 0.
+ * The mask is wider than the word, too: the 15 bits hold at most 3276.7 s, and a time over that is
+ * refused as well, so the cell never shows a value the image cannot hold.
+ */
+function tenthsProblem(text: string): string {
+  if (text === '') {
+    return 'type a time like 5.0';
+  }
+  if (!/^[0-9]{1,4}([.,][0-9]?)?$/.test(text)) {
+    return 'up to 4 digits, one point and one decimal';
+  }
+  if (parseTenths(text) > OUT_TENTHS_MAX) {
+    return 'the word holds at most 3276.7 s';
+  }
+  return '';
 }
 
 /** Swap a cell's state class (`edit` or `off`) and leave the rest, `dirty` included, alone. */
@@ -392,9 +453,9 @@ function paintTimeRow(n: number, img: Uint8Array): void {
     time.setAttribute('contenteditable', 'true');
   }
   const tenths = outTenths(img, n);
-  const shown = showTenths(tenths);
-  if (time.textContent !== shown) {
-    time.textContent = shown;
+  if (off) {
+    // an inert row has no caret to fight, so it may show the image's own value
+    time.textContent = showTenths(tenths);
   }
   const clock = showClock(tenths);
   if (read.textContent !== clock) {
@@ -665,6 +726,14 @@ function renderAbonents(panel: HTMLElement): void {
     panel,
     'Type in a Telefon / Nazwa cell to change it, click a Wyjście cell to toggle it, double-click a ' +
       'marked cell to put the loaded value back. „Zapis to device" or „Save .bme" carries the change.',
+  );
+  note(
+    panel,
+    'Typing is checked against the slot before it reaches the image: a Telefon holds 18 characters ' +
+      'and must start with + because the gate needs the country code, a Nazwa holds 15, and CP-1250 ' +
+      'has no byte for an alphabet it does not cover. A value that does not fit is underlined in ' +
+      'amber with the reason in its tooltip, and the image keeps the last value that did fit - the ' +
+      'draft you are typing is never rewritten, so the caret stays where you left it.',
   );
   note(
     panel,

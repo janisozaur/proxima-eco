@@ -8,7 +8,7 @@ import { ok } from 'node:assert';
 function eq(actual: unknown, expected: unknown): void {
   ok(actual === expected, `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
 }
-import { decodeByte, decodeCp1250 } from '../src/cp1250.ts';
+import { decodeByte, decodeCp1250, unencodable } from '../src/cp1250.ts';
 
 // ---- the table covers 0x80..0xFF and nothing else ----
 eq(decodeByte(0x41), 'A');
@@ -34,3 +34,12 @@ eq(decodeByte(0x9c), '\u015b'); // ś
   eq(decodeCp1250(bytes, 0, 4), 'AŁ');
   eq(decodeCp1250(bytes, 3, 1), 'B');
 }
+
+// ---- unencodable names the first letter the encoder would have to fake ----
+eq(unencodable(''), '');
+eq(unencodable('LANDA'), '');
+eq(unencodable('\u0141ukasz'), ''); // Łukasz: every letter has a byte
+eq(unencodable('\u20ac'), ''); // U+20AC is byte 0x80
+eq(unencodable('a\u0414b'), '\u0414'); // Cyrillic has no byte, and it is the first offender
+eq(unencodable('a\u01c5b'), '\u01c5'); // U+01C5 is a gap in the table
+eq(unencodable('?'), ''); // the '?' the encoder falls back to is itself storable

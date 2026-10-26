@@ -325,6 +325,15 @@ td.flagOff.dirty {
   outline: 1px solid var(--warn);
 }
 
+/* a typed value the image cannot hold: the draft is left alone so the caret never moves, and the
+   cell says why in its tooltip. Colour and an underline are used rather than an outline because
+   every dirty rule is more specific and would win over one here; neither of these resizes the UI. */
+td.reject,
+dd.reject {
+  color: var(--warn);
+  text-decoration: underline wavy var(--warn);
+}
+
 /* the per-row delete cell, at the end of the row */
 th.del,
 td.del {

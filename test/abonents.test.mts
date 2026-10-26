@@ -68,7 +68,8 @@ import {
   reactionCaption,
   eventProperty,
   EVENT_INPUT_KINDS,
- } from '../src/abonents.ts';
+  textProblem,
+} from '../src/abonents.ts';
 import { IMAGE_LEN } from '../src/protocol.ts';
 
 // ---- the arithmetic the layout claims is exact ----
@@ -387,4 +388,25 @@ function put(bytes: Uint8Array, at: number, text: string): void {
   image[at + CLIP_TEXT_AT + 1] = 0x45; // 'E'
   const sms = readClipRows(image)[0];
   eq(eventProperty(image, sms), 'TE');
+}
+
+// ---- the rules a typed value has to pass before it reaches the image ----
+{
+  const phone = PHONE_MAX;
+  const name = NAME_MAX;
+  eq(textProblem('+48501286393', phone, true), '');
+  // an empty phone is an empty slot, which is how an entry gets removed
+  eq(textProblem('', phone, true), '');
+  eq(textProblem('+', phone, true), ''); // a draft in progress
+  eq(textProblem('48501286393', phone, true), 'must start with + for the country code');
+  eq(textProblem('+4850128639a', phone, true), 'only digits after the +');
+  // the capacity is the vendor's own string[18] and string[15], not a style choice
+  eq(textProblem('+485012863930000000', phone, true), `too long: the slot holds ${phone} characters`);
+  eq(textProblem('Łukasz', name, false), '');
+  eq(textProblem('abcdefghijklmnop', name, false), `too long: the slot holds ${name} characters`);
+  // a letter CP-1250 has no byte for cannot be stored, so it is refused rather than saved as '?'
+  eq(textProblem('\u0414', name, false), 'CP-1250 has no byte for \u0414');
+  // the same rule with phone false is what the config head's PIN and password fields use
+  eq(textProblem('1234', 4, false), '');
+  eq(textProblem('12345', 4, false), 'too long: the slot holds 4 characters');
 }

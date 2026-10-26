@@ -9,7 +9,7 @@
  * first phone (`0x400–0x406`) are the flags of abonents 994–1000.
  */
 
-import { decodeCp1250, encodeCp1250 } from './cp1250.ts';
+import { decodeCp1250, encodeCp1250, unencodable } from './cp1250.ts';
 
 export const FLAG_BASE = 0x001f; // one byte per subscriber
 export const ABONENT_SLOTS = 1000;
@@ -477,4 +477,39 @@ export function readAdminInfo(image: Uint8Array): AdminInfo {
     pcPassword: at(PC_AT),
     smsPassword: at(SMS_AT),
   };
+}
+
+/**
+ * Why the client will not accept a typed value, or `''` when it will. The capacity is the vendor's
+ * own and is not a style choice: a phone slot is a `string[18]` and a name slot a `string[15]`, so
+ * the image has no room for one character more, and CP-1250 has no byte for some letters at all.
+ *
+ * The `+` is a client rule. Every phone the vendor ever writes starts with one — `+48…` in the
+ * dumps — and the gate needs it to know which country code to dial, so a phone that does not start
+ * with one is refused rather than silently stored. An empty phone is fine: that is an empty slot,
+ * which is how an entry gets removed.
+ */
+export function textProblem(text: string, limit: number, phone: boolean): string {
+  if (text.length > limit) {
+    return `too long: the slot holds ${limit} characters`;
+  }
+  const bad = unencodable(text);
+  if (bad !== '') {
+    return `CP-1250 has no byte for ${bad}`;
+  }
+  if (!phone) {
+    return '';
+  }
+  if (text === '') {
+    return '';
+  }
+  if (text[0] !== '+') {
+    return 'must start with + for the country code';
+  }
+  for (let i = 1; i < text.length; i++) {
+    if (text[i] < '0' || text[i] > '9') {
+      return 'only digits after the +';
+    }
+  }
+  return '';
 }
