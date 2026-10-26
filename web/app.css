@@ -600,6 +600,18 @@ footer strong {
   color: var(--ink);
 }
 
+/* the discovered/connected HID device: hex is what the user records to pin VID:PID */
+footer .dev {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12.5px;
+  letter-spacing: 0.3px;
+  color: var(--ink-faint);
+}
+
+footer .dev.on {
+  color: var(--accent);
+}
+
 footer .bad {
   color: var(--bad);
   font-weight: 700;

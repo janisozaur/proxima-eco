@@ -52,9 +52,27 @@ export class WebHidTransport implements Transport {
     this.handlers.push(handler);
   }
 
+  /** Which device this transport is open on, so the app can show its VID:PID. */
+  get identity(): HidIdentity {
+    return {
+      vendorId: this.device.vendorId,
+      productId: this.device.productId,
+      maxMessageSize: this.device.maxMessageSize,
+      maxReportsCount: this.device.maxReportsCount,
+    };
+  }
+
   close(): void {
     this.device.close();
   }
+}
+
+/** What the browser reports about one HID device — enough to pin it without a capture. */
+export interface HidIdentity {
+  vendorId: number;
+  productId: number;
+  maxMessageSize: number; // the gate's is 64, which is how it is recognised
+  maxReportsCount: number;
 }
 
 export interface ConnectOptions {
@@ -88,13 +106,31 @@ export async function connectWebHid(options: ConnectOptions = {}): Promise<WebHi
 }
 
 /** Discovery helper: reports what the browser sees, so VID:PID can be pinned. */
-export async function describeDevices(): Promise<string[]> {
+export async function describeDevices(): Promise<HidIdentity[]> {
   const hid: HidApi | undefined = (navigator as NavigatorWithHid).hid;
   if (hid === undefined) {
     return [];
   }
   const devices = await hid.requestDevice({ filters: [] });
-  return devices.map((d) =>
-    `vendor=0x${d.vendorId.toString(16)} product=0x${d.productId.toString(16)} ` +
-    `maxMessageSize=${d.maxMessageSize}`);
+  return devices.map((d) => ({
+    vendorId: d.vendorId,
+    productId: d.productId,
+    maxMessageSize: d.maxMessageSize,
+    maxReportsCount: d.maxReportsCount,
+  }));
+}
+
+/** One device as the app prints it: hex to transcribe, decimal to match the browser's prompt. */
+export function formatIdentity(d: HidIdentity): string {
+  return `VID 0x${hex4(d.vendorId)} (${d.vendorId}) · PID 0x${hex4(d.productId)} (${d.productId}) · ${d.maxMessageSize}-byte reports`;
+}
+
+/** The same device as the literal that pins it into PINNED_FILTERS, ready to copy out. */
+export function filterLiteral(d: HidIdentity): string {
+  return `{ vendorId: 0x${hex4(d.vendorId)}, productId: 0x${hex4(d.productId)} }`;
+}
+
+/** Four hex digits, capitalised: how a HID descriptor writes an ID. */
+function hex4(n: number): string {
+  return n.toString(16).toUpperCase().padStart(4, '0');
 }

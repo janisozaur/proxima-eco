@@ -16,7 +16,8 @@
  */
 
 import { Session, SERVICE_PASSWORD, PageRejected } from '../src/session.ts';
-import { connectWebHid, describeDevices } from '../src/webhid.ts';
+import { connectWebHid, describeDevices, formatIdentity, filterLiteral } from '../src/webhid.ts';
+import type { HidIdentity } from '../src/webhid.ts';
 import { webHidAvailable } from '../src/capability.ts';
 import { assertImageSize, decodeBme, encodeBme } from '../src/bme.ts';
 import { IMAGE_LEN, REGION_TABLE_DWORDS } from '../src/protocol.ts';
@@ -70,7 +71,8 @@ interface State {
   status: Status | null;
   regions: number[] | null;
   pushes: Frame[];
-  devices: string[];
+  devices: HidIdentity[]; // what the browser enumerated, so VID:PID can be recorded
+  connected: HidIdentity | null; // the device the current transport is open on
   source: string; // what the current image came from, for the footer strip
   error: string | null;
   live: boolean;
@@ -83,6 +85,7 @@ const state: State = {
   regions: null,
   pushes: [],
   devices: [],
+  connected: null,
   source: 'No image loaded.',
   error: null,
   live: false,
@@ -1155,8 +1158,11 @@ function renderSerwis(panel: HTMLElement): void {
     ['device', session === null ? 'not connected' : 'connected'],
     ['image', state.image === null ? '—' : `${IMAGE_LEN} bytes`],
   ]));
-  note(panel, 'Discovered HID devices — pin VID:PID once it is stable:');
-  add(panel, el('div', 'mono', state.devices.join('\n')));
+  note(panel, 'Discovered HID devices. The first line is what the browser reports; the second is the literal that pins this device into PINNED_FILTERS in src/webhid.ts.');
+  for (const d of state.devices) {
+    add(panel, el('div', 'mono', formatIdentity(d)));
+    add(panel, el('div', 'mono', filterLiteral(d)));
+  }
 }
 
 function renderUnknown(panel: HTMLElement): void {
@@ -1212,6 +1218,25 @@ let progressLabel = 'Odczytano';
 
 // ---------------------------------------------------------------- flows
 
+/**
+ * Enumerate the HID devices without connecting, so a user on a phone can read VID:PID off the
+ * screen and write it down. This is the only place the pair is discoverable from: no capture ever
+ * carried a GET_DEVICE_DESCRIPTOR, so nothing in the analysis repo has it, and until it is pinned
+ * the browser is asked to match every device.
+ */
+async function scanDevices(): Promise<void> {
+  state.error = null;
+  setState('read', 'Scanning HID devices...');
+  state.devices = await describeDevices();
+  if (state.devices.length === 0) {
+    fail('No HID device found: connect the gate and allow the HID prompt.');
+    setState('error', 'Not connected');
+    return;
+  }
+  setState('idle', `${state.devices.length} HID device(s) found`);
+  renderFooter();
+}
+
 async function readDevice(): Promise<void> {
   state.error = null;
   state.devices = await describeDevices();
@@ -1221,6 +1246,7 @@ async function readDevice(): Promise<void> {
     const s = new Session(t);
     device = t;
     session = s;
+    state.connected = t.identity;
     setState('read', 'Connected');
 
     // The service password is a client-side bypass: this performs zero exchanges.
@@ -1442,6 +1468,7 @@ function disconnect(): void {
   }
   session = null;
   device = null;
+  state.connected = null;
   state.live = false;
   setState('idle', 'Not connected');
 }
@@ -1468,6 +1495,7 @@ function setState(kind: string, text: string): void {
 function fail(message: string): void {
   state.error = message;
   setState('error', message);
+  renderFooter();
 }
 
 /** Tab switching: the active panel is the only one laid out. */
@@ -1526,6 +1554,20 @@ function renderFooter(): void {
         `administratorzy ${c.admins}/${ADMIN_SLOTS} · uŁytkownicy ${c.users}`;
     }
   }
+  const dev = document.getElementById('device');
+  if (dev !== null) {
+    const c = state.connected;
+    if (c !== null) {
+      dev.textContent = `device: ${formatIdentity(c)}`;
+      dev.setAttribute('class', 'dev on');
+    } else if (state.devices.length > 0) {
+      dev.textContent = `device: ${formatIdentity(state.devices[0])}`;
+      dev.setAttribute('class', 'dev');
+    } else {
+      dev.textContent = 'device: not scanned';
+      dev.setAttribute('class', 'dev');
+    }
+  }
   const ev = document.getElementById('events');
   if (ev !== null) {
     ev.textContent = 'zdarze: –/300';
@@ -1551,6 +1593,9 @@ if (nav !== null) {
   }
 }
 
+actionButton('Scan HID devices', () => {
+  void scanDevices();
+});
 actionButton('Odczyt from device', () => {
   void readDevice();
 });
