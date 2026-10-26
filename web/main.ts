@@ -386,8 +386,14 @@ async function writeDevice(): Promise<void> {
 }
 
 async function loadFile(): Promise<void> {
-  // A file input's `value` is a `File` at runtime, not the declared `string`.
-  const picked = fileInput.value as unknown as File;
+  // `input[type=file].value` is only a `C:\fakepath\…` string — the chosen `File` lives on the
+  // element's non-standard `files` property, which Chrome/Edge populate when the selection
+  // `change` event fires. It is absent from the DOM typings, hence the local cast.
+  const [picked] = (fileInput as unknown as { files: File[] }).files;
+  if (picked === undefined) {
+    fail('No file selected.');
+    return;
+  }
   try {
     const bytes = new Uint8Array(await picked.arrayBuffer());
     state.image = decodeBme(assertImageSize(bytes));
