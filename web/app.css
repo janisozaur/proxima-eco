@@ -444,13 +444,49 @@ dd.mode.dirty {
   background: var(--panel-2);
 }
 
-/* tab 3: the memo and the vendor's own read-out of it share one line */
+/* tab 3: the memo and the vendor's own read-out of it share one line. The read-out column is a
+   fixed track so typing a longer time cannot move the grid either: 11.5em fits the widest string
+   the value can print, `0h 54min. 59.9sek.`, plus the 40px the UA stylesheet indents a dd by. */
 .card dl.out {
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr 11.5em;
 }
 
-.card dd.read {
+.card dl.out dd.read {
   color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+/* a bistabilny output keeps its time row and greys it out; the vendor takes the field out of the
+   form, which makes its own card change height, but the row stays here so nothing resizes */
+.card dl.out dt.off,
+.card dl.out dd.read.off {
+  color: var(--ink-faint);
+}
+
+.card dl.out dd.time {
+  border: 1px dashed transparent;
+  border-radius: 6px;
+  padding: 1px 8px;
+}
+
+.card dl.out dd.time.edit {
+  border: 1px dashed var(--line);
+  cursor: text;
+}
+
+.card dl.out dd.time.edit:hover {
+  border-style: solid;
+}
+
+.card dl.out dd.time.edit.dirty {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  background: var(--panel-2);
+}
+
+.card dl.out dd.time.off {
+  color: var(--ink-faint);
+  cursor: default;
 }
 
 /* the reaction grid: its text column is editable, its numeric columns are raw values */
