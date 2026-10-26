@@ -37,7 +37,7 @@ import {
   readSplit,
   countAbonents,
 } from '../src/abonents.ts';
-import { encodeCp1250 } from '../src/cp1250.ts';
+import { decodeCp1250, encodeCp1250 } from '../src/cp1250.ts';
 import type { Transport } from '../src/transport.ts';
 import type { Frame, Status } from '../src/protocol.ts';
 
@@ -45,6 +45,7 @@ import type { Frame, Status } from '../src/protocol.ts';
 
 interface State {
   image: Uint8Array | null;
+  origin: Uint8Array | null; // the image exactly as it was loaded/read, to reset edits against
   status: Status | null;
   regions: number[] | null;
   pushes: Frame[];
@@ -52,11 +53,11 @@ interface State {
   source: string; // what the current image came from, for the footer strip
   error: string | null;
   live: boolean;
-  dirty: boolean; // the image was changed in place since it was last read or loaded
 }
 
 const state: State = {
   image: null,
+  origin: null,
   status: null,
   regions: null,
   pushes: [],
@@ -64,8 +65,22 @@ const state: State = {
   source: 'No image loaded.',
   error: null,
   live: false,
-  dirty: false,
 };
+
+/** Whether the image differs at all from the image exactly as it was read or loaded. */
+function edited(): boolean {
+  const a = state.image;
+  const b = state.origin;
+  if (a === null || b === null) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /** The session and its transport, set once the device is connected. */
 let session: Session | null = null;
@@ -148,9 +163,31 @@ const LANDMARKS: Record<number, string> = {
  * flag bit — the same gesture the vendor's `TGridClickHandler` performs.
  */
 const CELL_SLOTS = new Map<HTMLElement, { at: number; limit: number }>();
+const FLAG_CELLS = new Map<HTMLElement, { at: number; bit: number }>();
+
 function paintFlag(cell: HTMLElement, on: boolean): void {
   cell.className = on ? 'td.flagOn' : 'td.flagOff';
   cell.textContent = on ? '✓' : '';
+}
+
+/** Outline a cell whose value no longer matches the image exactly as it was loaded. */
+function markCell(cell: HTMLElement, on: boolean): void {
+  const parts = cell.className.split(' ').filter((c) => c !== 'dirty');
+  if (on) {
+    parts.push('dirty');
+  }
+  cell.className = parts.join(' ');
+}
+
+/** The value the slot behind `at` held when the image was last read or loaded. */
+function originText(at: number, limit: number): string {
+  const o = state.origin;
+  return o === null ? '' : decodeCp1250(o, at, limit);
+}
+
+function originFlag(at: number, bit: number): boolean {
+  const o = state.origin;
+  return o !== null && (o[at] & bit) !== 0;
 }
 
 /** One observer for whichever grids are currently painted; re-rendering replaces it. */
@@ -165,6 +202,7 @@ function renderAbonents(panel: HTMLElement): void {
 
   // the cells this render owns; stale entries from a previous paint must not be edited into
   CELL_SLOTS.clear();
+  FLAG_CELLS.clear();
   const previous: MutationObserver | null = cellObserver;
   if (previous !== null) {
     previous.disconnect();
@@ -191,7 +229,7 @@ function renderAbonents(panel: HTMLElement): void {
 
     for (const a of list) {
       const tr = add(body, el('tr', '', ''));
-      add(tr, el('td', 'num', String(a.poz)));
+      add(tr, el('td', 'num', String(a.poz).padStart(4, '0')));
       const phone = add(tr, el('td', 'phone', a.phone));
       const name = add(tr, el('td', 'edit', a.name));
       const slots: [HTMLElement, number, number][] = [
@@ -202,12 +240,26 @@ function renderAbonents(panel: HTMLElement): void {
         cell.setAttribute('contenteditable', 'true');
         cell.setAttribute('spellcheck', 'false');
         CELL_SLOTS.set(cell, { at, limit });
+        markCell(cell, decodeCp1250(image, at, limit) !== originText(at, limit));
+        cell.addEventListener('dblclick', () => {
+          const img = state.image;
+          if (img === null) {
+            return;
+          }
+          const back = originText(at, limit);
+          encodeCp1250(img, at, limit, back);
+          cell.textContent = back;
+          markCell(cell, false);
+          renderFooter();
+        });
       }
       const flags: [[number, boolean], [number, boolean]] = [[WYJ1_BIT, a.wyj1], [WYJ2_BIT, a.wyj2]];
       for (const [bit, on] of flags) {
         const cell = add(tr, el('td', 'flagOff', ''));
         paintFlag(cell, on);
         const at = FLAG_BASE + (a.poz - 1);
+        FLAG_CELLS.set(cell, { at, bit });
+        markCell(cell, on !== originFlag(at, bit));
         cell.addEventListener('click', () => {
           const img = state.image;
           if (img === null) {
@@ -216,7 +268,18 @@ function renderAbonents(panel: HTMLElement): void {
           const now = (img[at] & bit) === 0;
           img[at] = (now ? img[at] | bit : img[at] & ~bit) & 0xff;
           paintFlag(cell, now);
-          state.dirty = true;
+          markCell(cell, now !== originFlag(at, bit));
+          renderFooter();
+        });
+        cell.addEventListener('dblclick', () => {
+          const img = state.image;
+          if (img === null) {
+            return;
+          }
+          const want = originFlag(at, bit);
+          img[at] = (want ? img[at] | bit : img[at] & ~bit) & 0xff;
+          paintFlag(cell, want);
+          markCell(cell, false);
           renderFooter();
         });
       }
@@ -242,8 +305,8 @@ function renderAbonents(panel: HTMLElement): void {
         continue;
       }
       encodeCp1250(state.image, slot.at, slot.limit, cell.textContent);
-      state.dirty = true;
       touched = true;
+      markCell(cell, decodeCp1250(state.image, slot.at, slot.limit) !== originText(slot.at, slot.limit));
     }
     if (touched) {
       renderFooter();
@@ -257,16 +320,14 @@ function renderAbonents(panel: HTMLElement): void {
 
   note(
     panel,
-    'Type in a Telefon / Nazwa cell to change it in place; click a Wyjście cell to toggle that ' +
-      'switch. Both write straight into the loaded image, so „Zapis to device" or „Save .bme" is ' +
-      'what carries the change.',
+    'Type in a Telefon / Nazwa cell to change it, click a Wyjście cell to toggle it, double-click a ' +
+      'marked cell to put the loaded value back. „Zapis to device" or „Save .bme" carries the change.',
   );
   const s = readSplit(image);
   note(
     panel,
-    'The two grids are the split the vendor itself draws: the config head keeps the total entry ' +
-      `0x000F (${s.total}) and the user count at 0x000E (${s.users}); everything from there on is ` +
-      'listed under „administratorzy".',
+    `The head keeps ${s.admins} administrators at 0x000E and ${s.total} entries at 0x000F, so the ` +
+      `first ${s.admins} slots are the „administratorzy" grid and the rest „uŁytkownicy".`,
   );
 }
 
@@ -476,8 +537,8 @@ async function readDevice(): Promise<void> {
     progressLabel = 'Odczytano';
     setState('read', 'Reading…');
     state.image = await s.readWindow(setProgress);
+    state.origin = Uint8Array.from(state.image as Uint8Array);
     state.source = 'Odczytano z sterownika.';
-    state.dirty = false;
     repaint();
     setState('read', 'Device read');
   } catch (e) {
@@ -497,7 +558,9 @@ async function writeDevice(): Promise<void> {
   try {
     await s.writeWindow(state.image, setProgress);
     state.source = 'Zapisano to sterownika.';
-    state.dirty = false;
+    if (state.image !== null) {
+      state.origin = Uint8Array.from(state.image); // what the gate now holds is the new baseline
+    }
     repaint();
     setState('write', 'Device written');
   } catch (e) {
@@ -517,9 +580,9 @@ async function loadFile(): Promise<void> {
   try {
     const bytes = new Uint8Array(await picked.arrayBuffer());
     state.image = decodeBme(assertImageSize(bytes));
+    state.origin = Uint8Array.from(state.image as Uint8Array);
     state.source = `Odczytano z pliku. (${picked.name})`;
     state.error = null;
-    state.dirty = false;
     repaint();
   } catch (e) {
     fail(String(e));
@@ -631,7 +694,7 @@ function repaint(): void {
 function renderFooter(): void {
   const src = document.getElementById('source');
   if (src !== null) {
-    src.textContent = state.error ?? (state.dirty ? `${state.source} · edited` : state.source);
+    src.textContent = state.error ?? (edited() ? `${state.source} · edited` : state.source);
     src.setAttribute('class', state.error === null ? 'src' : 'bad');
   }
   const ab = document.getElementById('abonents');
@@ -642,7 +705,7 @@ function renderFooter(): void {
       const s = readSplit(state.image);
       ab.textContent =
         `abonenci: ${countAbonents(state.image)}/${ABONENT_SLOTS} · ` +
-        `users ${s.users} · administratorzy ${s.total - s.users}`;
+        `administratorzy ${s.admins} · uŁytkownicy ${s.total - s.admins}`;
     }
   }
   const ev = document.getElementById('events');

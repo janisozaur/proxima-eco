@@ -21,7 +21,7 @@ import {
   NAME_MAX,
   WYJ1_BIT,
   WYJ2_BIT,
-  GROUP_COUNT_AT,
+  ADMIN_COUNT_AT,
   TOTAL_COUNT_AT,
   readAbonents,
   readAdminInfo,
@@ -108,11 +108,11 @@ function put(bytes: Uint8Array, at: number, text: string): void {
   eq(readAbonents(empty).length, 0);
 }
 
-// ---- the users/admin split the config head keeps, and editing a slot in place ----
+// ---- the users/administrator split the config head keeps, and editing a slot in place ----
 {
   const image = new Uint8Array(IMAGE_LEN);
   image[0] = 0x07;
-  image[GROUP_COUNT_AT] = 2; // users: slots 1..2
+  image[ADMIN_COUNT_AT] = 2; // administrators: slots 1..2
   image[TOTAL_COUNT_AT] = 4; // total entries, little-endian
   image[TOTAL_COUNT_AT + 1] = 0;
 
@@ -123,13 +123,14 @@ function put(bytes: Uint8Array, at: number, text: string): void {
   }
 
   const split = readSplit(image);
-  eq(split.users, 2);
+  eq(split.admins, 2);
   eq(split.total, 4);
 
   const rows = readAbonents(image);
   eq(rows.length, 4);
-  eq(rows[1].admin, false);
-  eq(rows[2].admin, true); // the split point itself is already an administrator
+  eq(rows[0].admin, true); // the administrators are the first slots
+  eq(rows[1].admin, true);
+  eq(rows[2].admin, false); // the split point itself is already a user
 
   // an edit is just rewriting the slot: the image is the storage
   writeAbonentPhone(image, 3, '+48999999999');

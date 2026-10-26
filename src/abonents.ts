@@ -26,23 +26,26 @@ export const WYJ2_BIT = 0x02;
 
 /**
  * The config head carries the two counts the vendor splits its lists on: a 16-bit little-endian
- * **total entry count** at `0x0F` (the packer writes `length(abonents)` there) and a group count
- * at `0x0E` (a byte, 0..255, kept in step with one of the vendor's two list views). The CSV export
- * writes a `;"Administratorzy";;;` separator row, so the table is one array read as two groups:
- * the first `users` entries are users, the rest are administrators.
+ * **total entry count** at `0x0F` (the packer writes `length(abonents)` there, and the unpacker
+ * reads exactly that many slots) and an **administrator count** at `0x0E` (a byte, 0..255 — the
+ * packer stores it straight from a `TListView` item count, clamped to `0xFF`). The CSV export
+ * writes a `;"Administratorzy";;;` separator row, so the table is one array read as two groups,
+ * and the administrator group comes **first**: slots `1..admins` are administrators, the rest
+ * users. Confirmed against the vendor's own grid, whose `Poz.` column for the
+ * `administratorzy` list runs `0001…` while the `uzytownicy` list continues after it.
  */
-export const GROUP_COUNT_AT = 0x000e; // users
+export const ADMIN_COUNT_AT = 0x000e; // administrators, slots 1..admins
 export const TOTAL_COUNT_AT = 0x000f; // 16-bit little-endian
 
 export interface Split {
-  users: number;
+  admins: number;
   total: number;
 }
 
 export function readSplit(image: Uint8Array): Split {
   return {
-    users: image[GROUP_COUNT_AT],
-    total: image[GROUP_COUNT_AT + 1] | (image[GROUP_COUNT_AT + 2] << 8),
+    admins: image[ADMIN_COUNT_AT],
+    total: image[TOTAL_COUNT_AT] | (image[TOTAL_COUNT_AT + 1] << 8),
   };
 }
 
@@ -52,7 +55,7 @@ export interface Abonent {
   name: string;
   wyj1: boolean;
   wyj2: boolean;
-  admin: boolean; // at or after the split point
+  admin: boolean; // one of the first `admins` slots
 }
 
 /** Occupied slots only — an empty slot has no phone string. */
@@ -71,7 +74,7 @@ export function readAbonents(image: Uint8Array): Abonent[] {
       name: decodeCp1250(image, NAME_BASE + k * NAME_SLOT, NAME_MAX),
       wyj1: (flag & WYJ1_BIT) !== 0,
       wyj2: (flag & WYJ2_BIT) !== 0,
-      admin: k >= split.users,
+      admin: k < split.admins,
     });
   }
   return out;
