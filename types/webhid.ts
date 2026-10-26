@@ -40,7 +40,7 @@ export interface HidDeviceInfo {
 }
 
 export interface HidApi {
-  requestDevice(options: { filters?: Array<HidFilter> }): Promise<HidDevice[]>;
+  requestDevice(options: { filters: HidFilter[] }): Promise<HidDevice[]>;
   enumerateDevices?(): Promise<HidDevice[]>;
 }
 

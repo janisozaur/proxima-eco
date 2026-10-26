@@ -65,6 +65,10 @@ export interface ConnectOptions {
 /**
  * TODO: pin the gate's `vendorId`/`productId` here after one successful discovery run, so the
  * browser prompt shows exactly one device.
+ *
+ * Chrome rejects a filter that carries no property (`[{}]` throws "A filter must provide a
+ * property to filter by"), and `interface` alone is not accepted. An **empty list** is the valid
+ * "match everything" form, which is what the code below passes until this array is filled in.
  */
 export const PINNED_FILTERS: HidFilter[] = [];
 
@@ -89,7 +93,7 @@ export async function describeDevices(): Promise<string[]> {
   if (hid === undefined) {
     return [];
   }
-  const devices = await hid.requestDevice({ filters: [{}] });
+  const devices = await hid.requestDevice({ filters: [] });
   return devices.map((d) =>
     `vendor=0x${d.vendorId.toString(16)} product=0x${d.productId.toString(16)} ` +
     `maxMessageSize=${d.maxMessageSize}`);
