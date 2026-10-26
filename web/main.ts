@@ -139,13 +139,18 @@ function renderAbonents(panel: HTMLElement): void {
   row(head, 'th', [['th', 'Poz.'], ['th', 'Telefon'], ['th', 'Nazwa'], ['th', 'Wyjście 1'], ['th', 'Wyjście 2']]);
   const body = add(table, el('tbody', '', ''));
   for (const a of rows) {
-    row(body, 'td', [['td.num', String(a.poz)], ['td.phone', a.phone], ['td', a.name], ['td.flag', '—'], ['td.flag', '—']]);
+    row(body, 'td', [
+      ['td.num', String(a.poz)],
+      ['td.phone', a.phone],
+      ['td', a.name],
+      [a.wyj1 ? 'td.flagOn' : 'td.flagOff', a.wyj1 ? '✓' : ''],
+      [a.wyj2 ? 'td.flagOn' : 'td.flagOff', a.wyj2 ? '✓' : ''],
+    ]);
   }
   note(
     panel,
-    'Wyjście 1 / Wyjście 2 are the per-subscriber reaction switches in the 7 bytes ahead of the ' +
-      'phone string; their encoding is not decoded yet, so the columns stay empty rather than ' +
-      'guessing.',
+    'Wyjście 1 / Wyjście 2 are bit 0 and bit 1 of the flag byte at 0x001F + poz − 1, one of a ' +
+      'contiguous thousand-byte array that ends right where the phone table begins at 0x0407.',
   );
 }
 

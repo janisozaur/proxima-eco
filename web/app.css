@@ -241,6 +241,24 @@ td.flag {
   color: var(--ink-faint);
 }
 
+/* the two per-subscriber output switches, drawn as vendor-style checkboxes */
+td.flagOn,
+td.flagOff {
+  width: 26px;
+  height: 20px;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+td.flagOn {
+  color: var(--accent);
+}
+
+td.flagOff {
+  color: transparent;
+}
+
 /* ---------- actions ---------- */
 .actions {
   display: flex;
